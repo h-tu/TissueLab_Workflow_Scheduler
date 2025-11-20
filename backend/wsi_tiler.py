@@ -1,7 +1,7 @@
 import os
 import io
 from threading import Lock
-from typing import Dict, Any
+from typing import Dict, Any, List
 import openslide
 from PIL import Image
 import logging
@@ -9,18 +9,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Directory where your .svs files are stored
-DATA_DIR = "../data/inputs"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "../data/inputs")
 
 class WSITiler:
     def __init__(self):
         self._cache: Dict[str, openslide.OpenSlide] = {}
         self._lock = Lock()
 
+    def list_slides(self) -> List[str]:
+        """Scans the data directory for .svs files."""
+        if not os.path.exists(DATA_DIR):
+            return []
+        return [f for f in os.listdir(DATA_DIR) if f.endswith(".svs") or f.endswith(".tif")]
+
     def _get_slide(self, filename: str) -> openslide.OpenSlide:
-        """
-        Retrieves an OpenSlide object from cache or opens it.
-        Thread-safe because FastAPI uses thread pools for synchronous I/O.
-        """
         path = os.path.join(DATA_DIR, filename)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Slide not found: {path}")
@@ -37,45 +40,25 @@ class WSITiler:
             return self._cache[filename]
 
     def get_tile(self, filename: str, level: int, x: int, y: int, format: str = "jpeg") -> bytes:
-        """
-        Fetches a tile for Deep Zoom (OSD).
-        Note: OpenSeadragon requests tiles based on 'level' and grid coordinates (x, y).
-        """
         slide = self._get_slide(filename)
-        
-        # Standard Deep Zoom logic:
-        # 1. Calculate the tile size (usually 254 or 256 + overlap). 
-        #    We will stick to standard 256 for simplicity.
         tile_size = 256
         
-        # 2. OpenSlide's 'read_region' takes coordinates at Level 0 (highest res).
-        #    We need to map the requested tile (level, x, y) to Level 0 coordinates.
-        
-        # Get the downsample factor for this level
-        # OpenSlide levels go 0 (full), 1 (1/4), 2 (1/16)...
-        # But OSD requests often go 0 (1px), ... N (full). 
-        # We need to map OSD's zoom level to OpenSlide's level.
-        
-        # SIMPLIFICATION FOR 24H CHALLENGE:
-        # We will assume 'level' passed here matches OpenSlide levels (0 is high res).
-        # If your frontend sends OSD levels (where 0 is zoomed out), we'd need to invert.
-        # For now, we assume standard /z/x/y.
-        
         try:
-            # Helper logic to handle if requested level doesn't exist (zoom out too far)
-            # We clamp to the max available level in the slide
+            # Clamp level
             valid_level = min(level, slide.level_count - 1)
             
-            # Convert Grid (x,y) to Pixel Coordinates at that level
-            tile_x = x * tile_size
-            tile_y = y * tile_size
+            # Calculate coordinates
+            # Note: This logic assumes the frontend requests deep zoom levels 
+            # where 0 is the zoomed-out view. OpenSlide is opposite (0 is high res).
+            # We use a simplified mapping here for the 24h challenge.
             
-            # Read the region
-            # Note: read_region expects (x, y) at LEVEL 0.
-            # We must multiply by the downsample factor of the requested level.
+            # OpenSlide Level 0 = High Res
+            # If we want to support deep zoom properly, we usually just pass the 
+            # requested level directly to openslide if the viewer is configured to match.
+            
             downsample = int(slide.level_downsamples[valid_level])
-            location_x = tile_x * downsample
-            location_y = tile_y * downsample
+            location_x = x * tile_size * downsample
+            location_y = y * tile_size * downsample
             
             tile_img = slide.read_region(
                 location=(location_x, location_y),
@@ -83,21 +66,16 @@ class WSITiler:
                 size=(tile_size, tile_size)
             )
             
-            # Convert to RGB (OpenSlide is RGBA)
             tile_img = tile_img.convert("RGB")
-            
-            # Return bytes
             buf = io.BytesIO()
             tile_img.save(buf, format=format.upper(), quality=85)
             return buf.getvalue()
             
         except Exception as e:
             logger.error(f"Error reading tile {filename} {level} {x} {y}: {e}")
-            # Return a blank tile on error to not crash the viewer
             return self._get_blank_tile()
 
     def get_slide_info(self, filename: str) -> Dict[str, Any]:
-        """Returns metadata needed by OpenSeadragon to initialize."""
         slide = self._get_slide(filename)
         return {
             "width": slide.dimensions[0],
@@ -108,7 +86,7 @@ class WSITiler:
         }
 
     def _get_blank_tile(self) -> bytes:
-        img = Image.new('RGB', (256, 256), color='white')
+        img = Image.new('RGB', (256, 256), color='gray')
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
         return buf.getvalue()
