@@ -3,15 +3,20 @@ const API_URL = "http://localhost:8000";
 const TILE_SERVER_URL = "http://localhost:8000/tiles";
 
 let viewer = null;
+let overlay = null;
 let pollInterval = null;
+let currentSlideFilename = null;
+let completedJobIds = new Set();
+let isOverlayVisible = true;
 
 // --- 1. INITIALIZATION ---
 document.addEventListener("DOMContentLoaded", () => {
     initViewer();
     startPolling();
-    
-    // Auto-detect and load the slide list
     fetchSlideList();
+    
+    // Randomize User ID on refresh for easier testing
+    document.getElementById('userIdInput').value = "User_" + Math.floor(Math.random() * 1000);
 });
 
 // --- 2. OPENSEADRAGON VIEWER ---
@@ -27,6 +32,9 @@ function initViewer() {
         visibilityRatio: 1,
         zoomPerScroll: 2,
     });
+
+    // Initialize SVG Overlay
+    overlay = viewer.svgOverlay();
 }
 
 async function fetchSlideList() {
@@ -35,38 +43,42 @@ async function fetchSlideList() {
         const data = await res.json();
         
         if (data.slides && data.slides.length > 0) {
-            console.log("Found slides:", data.slides);
-            
-            // 1. Render the list in the sidebar
             renderSlideList(data.slides);
             
-            // 2. Auto-load the first one if nothing is loaded
-            loadSlide(data.slides[0]); 
+            // FIX: Access .name because 'slides' is now a list of objects
+            loadSlide(data.slides[0].name); 
         } else {
             document.getElementById('slideList').innerHTML = 
                 '<div class="text-xs text-red-400 p-2">No .svs files found in data/inputs</div>';
             document.getElementById('currentSlideName').innerText = "No Data";
         }
     } catch (e) {
-        console.error("Could not fetch slide list:", e);
+        console.error("Slide Fetch Error:", e);
         document.getElementById('slideList').innerHTML = 
             '<div class="text-xs text-red-400 p-2">Backend Connection Failed</div>';
-        document.getElementById('currentSlideName').innerText = "Backend Disconnected";
     }
 }
 
 function renderSlideList(slides) {
     const container = document.getElementById('slideList');
     
-    const html = slides.map(filename => {
-        // Truncate long filenames for UI beauty
-        const displayName = filename.length > 28 ? filename.substring(0, 25) + "..." : filename;
+    const html = slides.map(slide => {
+        const filename = slide.name;
+        const displayName = filename.length > 20 ? filename.substring(0, 18) + "..." : filename;
+        const fileSize = slide.size || "Unknown";
+        const dimensions = slide.dimensions || "Unknown";
         
         return `
             <div onclick="loadSlide('${filename}')" 
-                 class="slide-item cursor-pointer p-2 rounded hover:bg-slate-700 text-xs text-slate-300 flex items-center gap-2 group">
-                <i class="fa-solid fa-file-medical text-slate-500 group-hover:text-blue-400"></i>
-                <span title="${filename}">${displayName}</span>
+                 class="slide-item cursor-pointer p-3 rounded hover:bg-slate-700 text-slate-300 group border border-transparent hover:border-slate-600 transition-all mb-1">
+                <div class="flex items-center gap-2 mb-1">
+                    <i class="fa-solid fa-file-medical text-slate-500 group-hover:text-blue-400"></i>
+                    <span class="font-medium text-xs text-white" title="${filename}">${displayName}</span>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-400 pl-5 opacity-80">
+                    <span>${dimensions}</span>
+                    <span>${fileSize}</span>
+                </div>
             </div>
         `;
     }).join('');
@@ -78,19 +90,12 @@ async function loadSlide(filename) {
     const loader = document.getElementById('viewerLoader');
     const label = document.getElementById('currentSlideName');
     
-    // Show loading state
     loader.classList.remove('hidden');
     label.innerText = "Loading: " + filename;
+    currentSlideFilename = filename;
     
-    // Highlight selected item in list (optional visual polish)
-    const listItems = document.querySelectorAll('.slide-item');
-    listItems.forEach(item => {
-        if(item.innerText.includes(filename.substring(0, 10))) {
-            item.classList.add('bg-slate-700', 'text-white');
-        } else {
-            item.classList.remove('bg-slate-700', 'text-white');
-        }
-    });
+    // Clear existing overlays when switching slides
+    if(overlay) d3_clear_overlay(); 
 
     try {
         const response = await fetch(`${API_URL}/slides/${filename}/info`);
@@ -117,13 +122,13 @@ async function loadSlide(filename) {
         });
 
     } catch (error) {
-        console.error("Failed to load slide:", error);
+        console.error(error);
         label.innerText = "Error Loading File";
         loader.classList.add('hidden');
     }
 }
 
-// --- 3. DASHBOARD LOGIC (POLLING) ---
+// --- 3. POLLING & RESULT FETCHING ---
 function startPolling() {
     fetchStatus();
     pollInterval = setInterval(fetchStatus, 1000);
@@ -131,26 +136,114 @@ function startPolling() {
 
 async function fetchStatus() {
     const userId = document.getElementById('userIdInput').value;
-    
     try {
-        // 1. Get System Stats
+        // Stats
         const statusRes = await fetch(`${API_URL}/status`);
         const status = await statusRes.json();
         
         document.getElementById('activeUsersCount').innerText = `${status.active_users_count}/3`;
         document.getElementById('gpuWorkersCount').innerText = `${status.running_jobs}/4`;
 
-        // 2. Get Workflows
+        // Workflows
         const wfRes = await fetch(`${API_URL}/workflows/`, {
             headers: { 'X-User-ID': userId }
         });
         const workflows = await wfRes.json();
         
         renderWorkflows(workflows);
+        checkAndLoadResults(workflows);
 
-    } catch (e) {
-        // Silent error on polling to avoid console spam
+    } catch (e) { /* Silent fail */ }
+}
+
+function checkAndLoadResults(workflows) {
+    workflows.forEach(wf => {
+        wf.branches.forEach(branch => {
+            branch.jobs.forEach(async (job) => {
+                if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
+                    completedJobIds.add(job.id);
+                    
+                    // Fetch results
+                    try {
+                        const res = await fetch(`${API_URL}/results/${job.id}`, { headers: { 'X-User-ID': 'sys' } });
+                        if (res.ok) {
+                            const resultData = await res.json();
+                            // Only draw if it matches the current slide
+                            if (resultData.slide === currentSlideFilename) {
+                                drawPolygons(resultData.polygons);
+                                showNotification(`${resultData.cell_count} Cells Detected`);
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Failed to load results", err);
+                    }
+                }
+            });
+        });
+    });
+}
+
+function drawPolygons(polygons) {
+    if (!overlay) return;
+    
+    const svgNode = overlay.node();
+    const fragment = document.createDocumentFragment();
+    
+    polygons.forEach(poly => {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        
+        // Convert [[x,y], [x,y]] -> "x,y x,y" string
+        const pointsStr = poly.map(p => `${p[0]},${p[1]}`).join(" ");
+        
+        path.setAttribute("points", pointsStr);
+        path.setAttribute("class", "cell-polygon");
+        fragment.appendChild(path);
+    });
+    
+    svgNode.appendChild(fragment);
+    overlay.resize();
+    
+    document.getElementById('btnToggleOverlay').classList.remove('text-slate-400');
+    document.getElementById('btnToggleOverlay').classList.add('text-blue-400');
+}
+
+function d3_clear_overlay() {
+    if (overlay) {
+        const svgNode = overlay.node();
+        while (svgNode.firstChild) {
+            svgNode.removeChild(svgNode.firstChild);
+        }
     }
+}
+
+function toggleOverlay() {
+    if (!overlay) return;
+    const svgNode = overlay.node();
+    isOverlayVisible = !isOverlayVisible;
+    
+    svgNode.style.display = isOverlayVisible ? 'block' : 'none';
+    
+    const btn = document.getElementById('btnToggleOverlay');
+    if (isOverlayVisible) {
+        btn.classList.add('text-blue-400');
+        btn.classList.remove('text-slate-400');
+    } else {
+        btn.classList.add('text-slate-400');
+        btn.classList.remove('text-blue-400');
+    }
+}
+
+function showNotification(msg) {
+    const toast = document.getElementById('notificationToast');
+    document.getElementById('notificationText').innerText = msg;
+    
+    // Show: Slide DOWN from top (remove the negative translate)
+    toast.classList.remove('-translate-y-32');
+    
+    setTimeout(() => {
+        // Hide: Slide UP off screen (add the negative translate)
+        toast.classList.add('-translate-y-32');
+    }, 4000);
 }
 
 function renderWorkflows(workflows) {
@@ -183,55 +276,32 @@ function renderWorkflows(workflows) {
                         </div>
                      `).join('')}
                 </div>
-                <div class="text-xs text-slate-400 flex justify-between">
-                    <span>${wf.branches.length} Branches</span>
-                    <span>${wf.id.substring(0,8)}...</span>
-                </div>
             </div>
         `;
     }).join('');
-
     container.innerHTML = html;
 }
 
-// --- 4. MOCK SUBMISSION ---
 async function submitMockWorkflow() {
     const userId = document.getElementById('userIdInput').value;
-    
     const payload = {
-        workflow_name: "CellSeg_Run_" + Math.floor(Math.random() * 1000),
+        workflow_name: "Analysis_" + Math.floor(Math.random() * 1000),
         branches: [
             {
-                branch_name: "ROI_Upper_Left",
-                jobs: [
-                    { job_type: "SEGMENTATION", params: { region: [0,0,1024,1024] } },
-                    { job_type: "TISSUE_MASK", params: { threshold: 0.5 } }
-                ]
-            },
-            {
-                branch_name: "ROI_Lower_Right",
-                jobs: [
-                    { job_type: "SEGMENTATION", params: { region: [1024,1024,2048,2048] } }
-                ]
+                branch_name: "Region_1",
+                jobs: [ { job_type: "SEGMENTATION", params: {} } ]
             }
         ]
     };
-
     try {
         const res = await fetch(`${API_URL}/workflows/`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-User-ID": userId
-            },
+            headers: { "Content-Type": "application/json", "X-User-ID": userId },
             body: JSON.stringify(payload)
         });
-        
         if (res.status === 403 || res.status === 429) {
             alert("Queue Full! You are now waiting for a slot.");
         }
         fetchStatus();
-    } catch (e) {
-        alert("Failed to submit workflow: " + e);
-    }
+    } catch (e) { alert("Error: " + e); }
 }
