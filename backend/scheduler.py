@@ -54,7 +54,6 @@ class Scheduler:
             self.active_workflows = {}
             for w_data in data.get("active_workflows", []):
                 workflow = Workflow(**w_data)
-                # Mark running jobs as failed on restart
                 has_running = False
                 for branch in workflow.branches:
                     for job in branch.jobs:
@@ -94,7 +93,6 @@ class Scheduler:
         async with self.lock:
             if workflow_id in self.active_workflows:
                 workflow = self.active_workflows[workflow_id]
-                # Kill running jobs
                 for branch in workflow.branches:
                     for job in branch.jobs:
                         if job.id in self.job_cancellation_events:
@@ -103,7 +101,6 @@ class Scheduler:
                 self._save_state()
                 return True
             else:
-                # Check pending
                 original_len = len(self.pending_workflows)
                 self.pending_workflows = deque([w for w in self.pending_workflows if w.id != workflow_id])
                 if len(self.pending_workflows) < original_len:
@@ -111,10 +108,8 @@ class Scheduler:
                     return True
             return False
 
-    # --- NEW: CANCEL INDIVIDUAL JOB ---
     async def cancel_job(self, job_id: UUID) -> bool:
         async with self.lock:
-            # Search in Active Workflows
             for wf in self.active_workflows.values():
                 for branch in wf.branches:
                     for job in branch.jobs:
@@ -125,13 +120,11 @@ class Scheduler:
                                 self._save_state()
                                 return True
                             elif job.status == JobStatus.RUNNING:
-                                # Signal worker to stop
                                 if job.id in self.job_cancellation_events:
                                     self.job_cancellation_events[job.id].set()
                                 return True
-                            return False # Already done
+                            return False 
 
-            # Search in Pending Workflows (Rare but possible)
             for wf in self.pending_workflows:
                 for branch in wf.branches:
                     for job in branch.jobs:
@@ -162,24 +155,25 @@ class Scheduler:
 
                 all_branches_complete = True
                 for branch in workflow.branches:
-                    # Skip if branch has any job running or failed
                     if any(j.status == JobStatus.RUNNING for j in branch.jobs):
                         all_branches_complete = False
                         continue
                     
-                    # Find next PENDING job
                     next_job = next((j for j in branch.jobs if j.status == JobStatus.PENDING), None)
                     
                     if next_job:
                         all_branches_complete = False
-                        # Check if previous jobs in branch are OK
                         prev_jobs_ok = all(j.status in [JobStatus.COMPLETED, JobStatus.CANCELLED] for j in branch.jobs if j != next_job and branch.jobs.index(j) < branch.jobs.index(next_job))
                         
                         if prev_jobs_ok and self.running_job_count < MAX_GLOBAL_WORKERS:
+                            # --- UPDATE START TIME IF FIRST JOB ---
+                            if workflow.started_at is None:
+                                workflow.started_at = datetime.now()
+                                workflow.status = JobStatus.RUNNING # Ensure workflow is marked running
+                            
                             await self._start_job(workflow.user_id, next_job)
                             state_changed = True
                     
-                    # Check if branch is truly done
                     if any(j.status in [JobStatus.PENDING, JobStatus.RUNNING] for j in branch.jobs):
                         all_branches_complete = False
 
@@ -198,9 +192,9 @@ class Scheduler:
         job.started_at = datetime.now()
         self.running_job_count += 1
         self._save_state() 
-        asyncio.create_task(self._run_job_wrapper(job))
+        asyncio.create_task(self._run_job_wrapper(job, user_id))
 
-    async def _run_job_wrapper(self, job: Job):
+    async def _run_job_wrapper(self, job: Job, user_id: str):
         cancel_event = threading.Event()
         self.job_cancellation_events[job.id] = cancel_event
         
@@ -220,7 +214,7 @@ class Scheduler:
                 slide_path = os.path.join(data_dir, files[0])
 
             result_file = await asyncio.to_thread(
-                ml_worker.process_slide, slide_path, str(job.id), job.job_type, cancel_event, update_progress
+                ml_worker.process_slide, slide_path, str(job.id), job.job_type, cancel_event, update_progress, user_id
             )
             
             job.status = JobStatus.COMPLETED
@@ -256,12 +250,10 @@ class Scheduler:
                 self.active_user_ids.add(next_workflow.user_id)
                 self.active_workflows[next_workflow.id] = next_workflow
                 self._save_state()
-    
-    # --- NEW: METRICS FOR DASHBOARD ---
+
     def get_metrics(self):
         total_pending_jobs = 0
         completed_durations = []
-        
         for w in self.active_workflows.values():
             for b in w.branches:
                 for j in b.jobs:
@@ -274,7 +266,6 @@ class Scheduler:
         avg_latency = 0
         if completed_durations:
             avg_latency = sum(completed_durations) / len(completed_durations)
-            
         return {
             "pending_jobs_count": total_pending_jobs,
             "avg_job_latency": round(avg_latency, 1)

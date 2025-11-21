@@ -25,7 +25,7 @@ class JobCreate(JobBase):
 class Job(JobBase):
     id: UUID = Field(default_factory=uuid4)
     status: JobStatus = JobStatus.PENDING
-    progress: int = 0  # <--- ADDED: Track percentage (0-100)
+    progress: int = 0 
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -54,12 +54,13 @@ class Workflow(BaseModel):
     slide_name: Optional[str] = None 
     branches: List[Branch] = []
     created_at: datetime = Field(default_factory=datetime.now)
+    # --- NEW FIELD ---
+    started_at: Optional[datetime] = None 
     completed_at: Optional[datetime] = None
     status: JobStatus = JobStatus.PENDING
 
     @property
     def progress(self) -> float:
-        # Enhanced to include internal job progress
         total_jobs = sum(len(b.jobs) for b in self.branches)
         if total_jobs == 0: return 0.0
         

@@ -28,7 +28,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
-// Ensure these are globally available for HTML onclick attributes
 window.setUserId = function(id) {
     document.getElementById('userIdInput').value = "User_" + id;
     fetchStatus(); 
@@ -77,7 +76,6 @@ function initViewer() {
 
     overlay = viewer.svgOverlay();
 
-    // Optimization: Redraw only on view change with debounce
     viewer.addHandler('viewport-change', () => {
         if(window.redrawTimeout) clearTimeout(window.redrawTimeout);
         window.redrawTimeout = setTimeout(drawVisiblePolygons, 50); 
@@ -200,14 +198,11 @@ function checkNewResults(workflows) {
     workflows.forEach(wf => {
         wf.branches.forEach(branch => {
             branch.jobs.forEach(async (job) => {
-                // 1. Handle Completed
                 if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
                     completedJobIds.add(job.id);
                     loadJobResult(job.id, true); 
                 }
-                
-                // 2. Handle Running (Live Streaming)
-                // FIX: Check wf.slide_name instead of job.slide_name (which is undefined)
+                // FIX: Check wf.slide_name
                 if (job.status === 'RUNNING' && wf.slide_name === currentSlideFilename) {
                     loadJobResult(job.id, false); 
                 }
@@ -234,14 +229,13 @@ async function loadJobResult(jobId, showNotify) {
         if (res.ok) {
             const resultData = await res.json();
             if (resultData.slide === currentSlideFilename) {
-                // Handle new data structure (cells) or old (polygons)
                 if (resultData.cells) {
                     allCellsCache = resultData.cells;
                 } else if (resultData.polygons) {
                     allCellsCache = resultData.polygons.map(p => ({ polygon: p }));
                 }
 
-                drawVisiblePolygons(); // Trigger optimized draw
+                drawVisiblePolygons();
                 if(showNotify) showNotification(`${resultData.cell_count} Objects`);
             }
         }
@@ -252,21 +246,19 @@ async function loadJobResult(jobId, showNotify) {
 function drawVisiblePolygons() {
     if (!overlay || !currentSlideWidth || allCellsCache.length === 0) return;
 
-    // Removed aggressive zoom check so results are visible even when zoomed out
     const svgNode = overlay.node();
     d3_clear_overlay();
     
     const bounds = viewer.viewport.getBounds();
     const fragment = document.createDocumentFragment();
     
-    // Viewport Culling
     const minX = bounds.x * currentSlideWidth;
     const maxX = (bounds.x + bounds.width) * currentSlideWidth;
     const minY = bounds.y * currentSlideWidth;
     const maxY = (bounds.y + bounds.height) * currentSlideWidth;
 
     let count = 0;
-    const maxDraw = 4000; // Limit DOM nodes per frame
+    const maxDraw = 4000; 
 
     for (let i = 0; i < allCellsCache.length; i++) {
         if (count >= maxDraw) break;
@@ -275,7 +267,6 @@ function drawVisiblePolygons() {
         const poly = cell.polygon;
         if (!poly || poly.length === 0) continue;
 
-        // Check first point
         const px = poly[0][0];
         const py = poly[0][1];
 
@@ -332,7 +323,40 @@ function showNotification(msg) {
     setTimeout(() => toast.classList.add('-translate-y-32'), 4000);
 }
 
-// --- WORKFLOW RENDERING ---
+// --- TIME FORMATTING HELPERS ---
+function formatDuration(seconds) {
+    if (!seconds || seconds < 0) return "0s";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function getWorkflowTiming(wf, percent) {
+    if (!wf.started_at) return { elapsed: "0s", remaining: "Pending" };
+    
+    const startTime = new Date(wf.started_at).getTime();
+    const now = new Date().getTime();
+    let elapsedMs = now - startTime;
+    
+    // If completed, use static elapsed time
+    if (wf.status === 'COMPLETED' || wf.status === 'FAILED' || wf.status === 'CANCELLED') {
+        if (wf.completed_at) {
+             elapsedMs = new Date(wf.completed_at).getTime() - startTime;
+        }
+        return { elapsed: formatDuration(elapsedMs / 1000), remaining: "-" };
+    }
+
+    const elapsedSec = elapsedMs / 1000;
+    let remainingStr = "Calculating...";
+    
+    if (percent > 0) {
+        const totalEstSec = elapsedSec / (percent / 100);
+        const remainSec = totalEstSec - elapsedSec;
+        remainingStr = formatDuration(remainSec);
+    }
+
+    return { elapsed: formatDuration(elapsedSec), remaining: remainingStr };
+}
 
 function calculateWorkflowStats(wf) {
     let totalJobs = 0;
@@ -362,6 +386,8 @@ function renderWorkflows(workflows) {
         if (wf.status === "PENDING") statusColor = "bg-amber-500";
 
         const percent = calculateWorkflowStats(wf);
+        const timing = getWorkflowTiming(wf, percent); // Get Time Metrics
+        
         const deleteBtn = (wf.status === "COMPLETED" || wf.status === "FAILED" || wf.status === "CANCELLED") ? 
             `<button onclick="deleteWorkflow('${wf.id}', event)" class="text-slate-500 hover:text-red-400 p-1"><i class="fa-solid fa-trash-can"></i></button>` : '';
 
@@ -380,7 +406,13 @@ function renderWorkflows(workflows) {
             <div onclick="openWorkflowDetails('${wf.id}')" 
                  class="bg-slate-700 rounded-lg p-3 border border-slate-600 shadow-sm hover:border-blue-500/50 transition-all cursor-pointer relative group">
                 <div class="flex justify-between items-start mb-1">
-                    <div><div class="font-bold text-sm text-slate-200">${wf.name}</div></div>
+                    <div>
+                        <div class="font-bold text-sm text-slate-200">${wf.name}</div>
+                        <div class="text-[10px] text-slate-400 font-mono mt-1">
+                             <span class="text-blue-300"><i class="fa-regular fa-clock"></i> ${timing.elapsed}</span>
+                             <span class="ml-2 text-slate-500">ETA: ${timing.remaining}</span>
+                        </div>
+                    </div>
                     <div class="flex flex-col items-end gap-1">
                         <div class="flex items-center gap-2">
                              <span class="text-xs font-mono font-bold text-blue-300">${percent}%</span>
@@ -398,9 +430,16 @@ function renderWorkflows(workflows) {
 
 function renderDetailsContent(wf) {
     const percent = calculateWorkflowStats(wf);
+    const timing = getWorkflowTiming(wf, percent);
+
     document.getElementById('detailWfName').innerHTML = `
         <div class="flex justify-between items-center w-full">
-            <span>${wf.name}</span>
+            <div>
+                <div>${wf.name}</div>
+                <div class="text-xs font-normal text-slate-400 mt-1 font-mono">
+                    Elapsed: <span class="text-white">${timing.elapsed}</span> &bull; Remaining: <span class="text-white">${timing.remaining}</span>
+                </div>
+            </div>
             <span class="text-sm font-mono text-blue-400 bg-blue-900/30 px-2 py-1 rounded">${percent}%</span>
         </div>`;
     document.getElementById('detailWfId').innerText = "ID: " + wf.id;
