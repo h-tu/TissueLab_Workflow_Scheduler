@@ -73,6 +73,8 @@ If you prefer running without Docker:
     ./run.sh
     ```
 
+(While Testing, I noticed the Docker Version might have some small issues with the job runtime ETA, which does not exist for local development (option 2).)
+
 ---
 
 ## Scaling Strategy (10x Growth)
