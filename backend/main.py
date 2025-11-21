@@ -8,14 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 
-from .models import (
-    WorkflowCreate, 
-    Workflow, 
-    Branch, 
-    Job, 
-    JobStatus,
-    JobType
-)
+from .models import WorkflowCreate, Workflow, Branch, Job, JobStatus, JobType
 from .scheduler import Scheduler
 from .wsi_tiler import WSITiler
 
@@ -47,7 +40,6 @@ async def get_user_id(x_user_id: Annotated[str | None, Header()] = None):
 @app.post("/workflows/", response_model=Workflow)
 async def submit_workflow(
     workflow_in: WorkflowCreate, 
-    background_tasks: BackgroundTasks,
     user_id: str = Depends(get_user_id)
 ):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,19 +54,9 @@ async def submit_workflow(
         for j_in in b_in.jobs:
             job_params = j_in.params.copy()
             job_params["slide_name"] = workflow_in.slide_name
-
-            job = Job(
-                job_type=j_in.job_type,
-                params=job_params,
-                status=JobStatus.PENDING
-            )
+            job = Job(job_type=j_in.job_type, params=job_params, status=JobStatus.PENDING)
             internal_jobs.append(job)
-            
-        branch = Branch(
-            name=b_in.branch_name,
-            jobs=internal_jobs,
-            status=JobStatus.PENDING
-        )
+        branch = Branch(name=b_in.branch_name, jobs=internal_jobs, status=JobStatus.PENDING)
         internal_branches.append(branch)
 
     new_workflow = Workflow(
@@ -86,52 +68,56 @@ async def submit_workflow(
     )
     
     is_running = await scheduler.submit_workflow(new_workflow)
-    
-    if is_running:
-        new_workflow.status = JobStatus.RUNNING
-    
+    if is_running: new_workflow.status = JobStatus.RUNNING
     return new_workflow
 
 @app.get("/workflows/")
 async def list_workflows(user_id: str = Depends(get_user_id)):
     user_workflows = []
-    
     for w in scheduler.active_workflows.values():
-        if w.user_id == user_id:
-            user_workflows.append(w)
-            
+        if w.user_id == user_id: user_workflows.append(w)
     for w in scheduler.pending_workflows:
-        if w.user_id == user_id:
-            user_workflows.append(w)
-            
+        if w.user_id == user_id: user_workflows.append(w)
     return user_workflows
 
-# --- ADDED: Delete Endpoint ---
 @app.delete("/workflows/{workflow_id}")
 async def delete_workflow(workflow_id: str, user_id: str = Depends(get_user_id)):
     try:
         w_uuid = UUID(workflow_id)
         success = await scheduler.delete_workflow(w_uuid)
-        if not success:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        if not success: raise HTTPException(status_code=404, detail="Workflow not found")
         return {"status": "deleted", "id": str(w_uuid)}
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
+# --- NEW: Cancel Job Endpoint ---
+@app.delete("/jobs/{job_id}")
+async def cancel_job(job_id: str, user_id: str = Depends(get_user_id)):
+    try:
+        j_uuid = UUID(job_id)
+        success = await scheduler.cancel_job(j_uuid)
+        if not success: raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
+        return {"status": "cancelled", "id": str(j_uuid)}
+    except ValueError:
+         raise HTTPException(status_code=400, detail="Invalid UUID")
+
 @app.get("/status")
 async def get_system_status():
+    # Include new metrics
+    metrics = scheduler.get_metrics()
     return {
         "active_users_count": len(scheduler.active_user_ids),
         "active_users": list(scheduler.active_user_ids),
         "queue_depth": len(scheduler.pending_workflows),
-        "running_jobs": scheduler.running_job_count
+        "running_jobs": scheduler.running_job_count,
+        "pending_jobs_count": metrics["pending_jobs_count"],
+        "avg_job_latency": metrics["avg_job_latency"]
     }
 
 @app.get("/slides")
 async def get_available_slides():
     try:
-        slides = tiler.list_slides()
-        return {"slides": slides}
+        return {"slides": tiler.list_slides()}
     except Exception as e:
         return {"slides": [], "error": str(e)}
 
@@ -139,10 +125,8 @@ async def get_available_slides():
 async def get_slide_metadata(filename: str):
     try:
         return tiler.get_slide_info(filename)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Slide not found")
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to read slide")
+        raise HTTPException(status_code=404, detail="Slide not found")
 
 @app.get("/tiles/{filename}/{level}/{x}_{y}.jpeg")
 def get_tile(filename: str, level: int, x: int, y: int):
@@ -157,7 +141,6 @@ async def get_job_results(job_id: str, user_id: str = Depends(get_user_id)):
     try:
         safe_id = os.path.basename(job_id) 
         filename = f"results_{safe_id}.json"
-        
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         filepath = os.path.join(base_dir, filename)
         
@@ -166,11 +149,7 @@ async def get_job_results(job_id: str, user_id: str = Depends(get_user_id)):
              
         with open(filepath, "r") as f:
             data = json.load(f)
-            
         return data
-        
-    except HTTPException as he:
-        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

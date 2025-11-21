@@ -42,24 +42,25 @@ class MLWorker:
             except Exception as e:
                 logger.error(f"❌ Failed to load InstanSeg: {e}")
 
-    # --- IMPROVED BACKGROUND CHECK ---
-    def _is_background(self, tile_np, threshold=235): # Increased from 220 to 235
+    def _is_background(self, tile_np, threshold=235):
         """
         Robust background detection:
         1. Check if mean intensity is high (white).
         2. Check if standard deviation is low (flat/glass).
-        Tissue usually has texture (high std dev) even if it's pale.
         """
         gray = cv2.cvtColor(tile_np, cv2.COLOR_RGB2GRAY)
         mean_val = np.mean(gray)
         std_dev = np.std(gray)
         
-        # Only skip if it is VERY white AND has very little texture (glass)
         if mean_val > threshold and std_dev < 15:
             return True
         return False
 
-    def _save_json(self, job_id, filename, polygons):
+    def _save_json(self, job_id, filename, cells_data):
+        """
+        Saves rich metadata for export requirements.
+        Structure: { "job_id": ..., "cells": [ { "polygon": [...], "area": 123, "centroid": [x,y] }, ... ] }
+        """
         output_filename = f"results_{job_id}.json"
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         output_path = os.path.join(base_dir, output_filename)
@@ -70,8 +71,8 @@ class MLWorker:
                 json.dump({
                     "job_id": str(job_id),
                     "slide": filename,
-                    "cell_count": len(polygons),
-                    "polygons": polygons 
+                    "cell_count": len(cells_data),
+                    "cells": cells_data # Export full metadata objects
                 }, f)
             os.replace(temp_path, output_path)
         except Exception as e:
@@ -99,7 +100,7 @@ class MLWorker:
             except:
                 pixel_size = 0.5
 
-            all_polygons = []
+            all_cells = [] # List of dicts with metadata
             
             rows = range(0, h, STRIDE)
             cols = range(0, w, STRIDE)
@@ -119,8 +120,10 @@ class MLWorker:
                         pct = int((processed_tiles / total_tiles) * 100)
                         progress_callback(pct)
                         
-                    if processed_tiles % 50 == 0: # Save less frequently to save IO
-                        self._save_json(job_id, filename, all_polygons)
+                    if processed_tiles % 50 == 0:
+                        self._save_json(job_id, filename, all_cells)
+
+                    # --- LIMIT REMOVED FOR FULL PROCESSING ---
 
                     read_x = x - OVERLAP
                     read_y = y - OVERLAP
@@ -130,7 +133,6 @@ class MLWorker:
                     tile = slide.read_region((valid_read_x, valid_read_y), 0, (TILE_SIZE, TILE_SIZE)).convert("RGB")
                     tile_np = np.array(tile)
 
-                    # --- CHECK BACKGROUND ---
                     if self._is_background(tile_np):
                         continue
                     
@@ -143,6 +145,7 @@ class MLWorker:
                             labeled_output = labeled_output.detach().cpu().numpy()
                         
                         labeled_output = np.squeeze(labeled_output)
+                        # Get polygons relative to the tile
                         local_polys = self._mask_to_polygons(labeled_output)
                     
                     except Exception as e:
@@ -151,22 +154,29 @@ class MLWorker:
                     valid_box = box(x, y, min(x + STRIDE, w), min(y + STRIDE, h))
                     
                     for poly_coords in local_polys:
-                        global_poly = []
+                        global_poly_coords = []
                         for (px, py) in poly_coords:
                             gx = px + valid_read_x
                             gy = py + valid_read_y
-                            global_poly.append((gx, gy))
+                            global_poly_coords.append((gx, gy))
                         
-                        if len(global_poly) < 3: continue
+                        if len(global_poly_coords) < 3: continue
                         
-                        poly_shape = Polygon(global_poly)
+                        poly_shape = Polygon(global_poly_coords)
                         
+                        # Merge Strategy: Only keep if centroid is in this tile's "valid region"
                         if valid_box.contains(poly_shape.centroid):
-                            all_polygons.append(global_poly)
+                            # --- METADATA CALCULATION ---
+                            cell_data = {
+                                "polygon": global_poly_coords,
+                                "area": round(poly_shape.area, 2),
+                                "centroid": [round(poly_shape.centroid.x, 1), round(poly_shape.centroid.y, 1)],
+                                "confidence": 1.0 # Placeholder if model doesn't provide per-instance score
+                            }
+                            all_cells.append(cell_data)
 
-            # Final Save
             if progress_callback: progress_callback(100)
-            self._save_json(job_id, filename, all_polygons)
+            self._save_json(job_id, filename, all_cells)
             
             output_filename = f"results_{job_id}.json"
             return output_filename
@@ -189,7 +199,8 @@ class MLWorker:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         scale_x = slide.dimensions[0] / thumbnail.size[0]
         scale_y = slide.dimensions[1] / thumbnail.size[1]
-        tissue_polygons = []
+        
+        tissue_cells = []
         for cnt in contours:
             if cv2.contourArea(cnt) < 500: continue
             epsilon = 0.005 * cv2.arcLength(cnt, True)
@@ -201,20 +212,16 @@ class MLWorker:
                 gx = int(x_thumb * scale_x)
                 gy = int(y_thumb * scale_y)
                 poly_points.append([gx, gy])
-            tissue_polygons.append(poly_points)
+            
+            # Mock metadata for tissue mask
+            tissue_cells.append({
+                "polygon": poly_points,
+                "area": cv2.contourArea(cnt) * scale_x * scale_y,
+                "centroid": [0,0] # Simplified for tissue mask
+            })
         
-        output_filename = f"results_{job_id}.json"
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        output_path = os.path.join(base_dir, output_filename)
-        
-        with open(output_path, "w") as f:
-            json.dump({
-                "job_id": str(job_id),
-                "slide": filename,
-                "cell_count": len(tissue_polygons),
-                "polygons": tissue_polygons 
-            }, f)
-        return output_filename
+        self._save_json(job_id, filename, tissue_cells)
+        return f"results_{job_id}.json"
 
     def _mask_to_polygons(self, label_mask):
         polys = []
