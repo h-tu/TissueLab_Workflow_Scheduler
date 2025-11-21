@@ -6,6 +6,9 @@ import openslide
 from PIL import Image
 import logging
 
+# Import the new cache service
+from .tile_cache import TileCache
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,8 +16,11 @@ DATA_DIR = os.path.normpath(os.path.join(BASE_DIR, "../data/inputs"))
 
 class WSITiler:
     def __init__(self):
-        self._cache: Dict[str, openslide.OpenSlide] = {}
+        self._slide_cache: Dict[str, openslide.OpenSlide] = {}
         self._lock = Lock()
+        
+        # Initialize the LRU Cache (Store 2000 tiles, expire after 1 hour)
+        self.tile_cache = TileCache(max_size=2000, max_age_seconds=3600)
 
     def list_slides(self) -> List[Dict[str, Any]]:
         if not os.path.exists(DATA_DIR):
@@ -34,8 +40,8 @@ class WSITiler:
                     size_str = f"{size_mb:.0f} MB"
 
                 dims = "Unknown"
-                if f in self._cache:
-                    w, h = self._cache[f].dimensions
+                if f in self._slide_cache:
+                    w, h = self._slide_cache[f].dimensions
                     dims = f"{w} x {h}"
                 else:
                     with openslide.OpenSlide(file_path) as temp_slide:
@@ -64,12 +70,19 @@ class WSITiler:
             raise FileNotFoundError(f"Slide not found at: {path}")
 
         with self._lock:
-            if filename not in self._cache:
+            if filename not in self._slide_cache:
                 slide = openslide.OpenSlide(path)
-                self._cache[filename] = slide
-            return self._cache[filename]
+                self._slide_cache[filename] = slide
+            return self._slide_cache[filename]
 
     def get_tile(self, filename: str, level: int, x: int, y: int, format: str = "jpeg") -> bytes:
+        # 1. Check Memory Cache First
+        cache_key = f"{filename}_{level}_{x}_{y}_{format}"
+        cached_data = self.tile_cache.get_tile(cache_key)
+        if cached_data:
+            return cached_data
+
+        # 2. Generate Tile if not in cache
         try:
             slide = self._get_slide(filename)
         except FileNotFoundError:
@@ -112,7 +125,12 @@ class WSITiler:
                 
             buf = io.BytesIO()
             bg.save(buf, format=format.upper(), quality=85)
-            return buf.getvalue()
+            tile_bytes = buf.getvalue()
+
+            # 3. Save to Cache
+            self.tile_cache.put_tile(cache_key, tile_bytes)
+            
+            return tile_bytes
             
         except Exception:
             return self._get_blank_tile()

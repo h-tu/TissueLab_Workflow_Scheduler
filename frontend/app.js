@@ -28,7 +28,7 @@ function initViewer() {
         blendTime: 0.1,
         constrainDuringPan: true,
         maxZoomPixelRatio: 2,
-        minZoomLevel: 1,
+        minZoomLevel: 0, // Full zoom out
         visibilityRatio: 1,
         zoomPerScroll: 2,
     });
@@ -44,8 +44,6 @@ async function fetchSlideList() {
         
         if (data.slides && data.slides.length > 0) {
             renderSlideList(data.slides);
-            
-            // FIX: Access .name because 'slides' is now a list of objects
             loadSlide(data.slides[0].name); 
         } else {
             document.getElementById('slideList').innerHTML = 
@@ -90,11 +88,17 @@ async function loadSlide(filename) {
     const loader = document.getElementById('viewerLoader');
     const label = document.getElementById('currentSlideName');
     
+    // --- FIX: TRANSPARENT LOADER ---
+    // We remove the solid background (bg-slate-900) and use a semi-transparent one.
+    // This lets the user see the OpenSeadragon viewer "behind" the spinner immediately.
     loader.classList.remove('hidden');
+    loader.classList.remove('bg-slate-900'); // Remove solid color
+    loader.classList.add('bg-slate-900/50'); // Add transparent backdrop
+    loader.classList.add('pointer-events-none'); // Let clicks pass through to the viewer
+    
     label.innerText = "Loading: " + filename;
     currentSlideFilename = filename;
     
-    // Clear existing overlays when switching slides
     if(overlay) d3_clear_overlay(); 
 
     try {
@@ -114,12 +118,24 @@ async function loadSlide(filename) {
             }
         };
 
-        viewer.open(tileSource);
-        
-        viewer.addHandler('open', function() {
+        // Remove loader when the FIRST tile arrives.
+        // Because the loader is transparent, the user sees tiles loading before this event too.
+        viewer.addOnceHandler('tile-loaded', function() {
             loader.classList.add('hidden');
+            // Reset classes for next time
+            loader.classList.remove('bg-slate-900/50'); 
+            loader.classList.remove('pointer-events-none');
+            loader.classList.add('bg-slate-900');
+            
             label.innerText = filename;
         });
+
+        viewer.addOnceHandler('open-failed', function() {
+             loader.classList.add('hidden');
+             label.innerText = "Error Opening Slide";
+        });
+
+        viewer.open(tileSource);
 
     } catch (error) {
         console.error(error);
@@ -168,7 +184,6 @@ function checkAndLoadResults(workflows) {
                         const res = await fetch(`${API_URL}/results/${job.id}`, { headers: { 'X-User-ID': 'sys' } });
                         if (res.ok) {
                             const resultData = await res.json();
-                            // Only draw if it matches the current slide
                             if (resultData.slide === currentSlideFilename) {
                                 drawPolygons(resultData.polygons);
                                 showNotification(`${resultData.cell_count} Cells Detected`);
@@ -191,10 +206,7 @@ function drawPolygons(polygons) {
     
     polygons.forEach(poly => {
         const path = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-        
-        // Convert [[x,y], [x,y]] -> "x,y x,y" string
         const pointsStr = poly.map(p => `${p[0]},${p[1]}`).join(" ");
-        
         path.setAttribute("points", pointsStr);
         path.setAttribute("class", "cell-polygon");
         fragment.appendChild(path);
@@ -237,11 +249,8 @@ function showNotification(msg) {
     const toast = document.getElementById('notificationToast');
     document.getElementById('notificationText').innerText = msg;
     
-    // Show: Slide DOWN from top (remove the negative translate)
     toast.classList.remove('-translate-y-32');
-    
     setTimeout(() => {
-        // Hide: Slide UP off screen (add the negative translate)
         toast.classList.add('-translate-y-32');
     }, 4000);
 }
