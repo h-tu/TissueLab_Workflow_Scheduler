@@ -202,7 +202,6 @@ function checkNewResults(workflows) {
                     completedJobIds.add(job.id);
                     loadJobResult(job.id, true); 
                 }
-                // FIX: Check wf.slide_name
                 if (job.status === 'RUNNING' && wf.slide_name === currentSlideFilename) {
                     loadJobResult(job.id, false); 
                 }
@@ -338,7 +337,6 @@ function getWorkflowTiming(wf, percent) {
     const now = new Date().getTime();
     let elapsedMs = now - startTime;
     
-    // If completed, use static elapsed time
     if (wf.status === 'COMPLETED' || wf.status === 'FAILED' || wf.status === 'CANCELLED') {
         if (wf.completed_at) {
              elapsedMs = new Date(wf.completed_at).getTime() - startTime;
@@ -386,7 +384,7 @@ function renderWorkflows(workflows) {
         if (wf.status === "PENDING") statusColor = "bg-amber-500";
 
         const percent = calculateWorkflowStats(wf);
-        const timing = getWorkflowTiming(wf, percent); // Get Time Metrics
+        const timing = getWorkflowTiming(wf, percent);
         
         const deleteBtn = (wf.status === "COMPLETED" || wf.status === "FAILED" || wf.status === "CANCELLED") ? 
             `<button onclick="deleteWorkflow('${wf.id}', event)" class="text-slate-500 hover:text-red-400 p-1"><i class="fa-solid fa-trash-can"></i></button>` : '';
@@ -479,6 +477,47 @@ function renderDetailsContent(wf) {
     document.getElementById('detailContent').innerHTML = contentHtml;
 }
 
+// --- NEW: SMART MASK INDICATORS ---
+function updateBuilderIndicators() {
+    // 1. Check History (Active Workflows)
+    // Note: Only checking ACTIVE workflows. Deleted workflows with orphaned mask files won't trigger this hint
+    // unless we add a specific backend endpoint, but this covers 90% of user cases.
+    const hasHistoryMask = currentWorkflowsCache.some(wf => 
+        wf.slide_name === currentSlideFilename && 
+        wf.branches.some(b => b.jobs.some(j => j.job_type === 'TISSUE_MASK' && j.status === 'COMPLETED'))
+    );
+
+    // 2. Check Current Builder
+    let hasBuilderMask = false;
+    document.querySelectorAll('.job-type-select').forEach(sel => {
+        if (sel.value === 'TISSUE_MASK') hasBuilderMask = true;
+    });
+
+    const isSmartReady = hasHistoryMask || hasBuilderMask;
+
+    // 3. Update UI
+    document.querySelectorAll('.builder-job').forEach(jobDiv => {
+        const select = jobDiv.querySelector('.job-type-select');
+        const indicator = jobDiv.querySelector('.smart-mask-indicator');
+        
+        if(!indicator) return; // Safety
+
+        if (select.value === 'SEGMENTATION') {
+            indicator.classList.remove('hidden');
+            if (isSmartReady) {
+                indicator.innerHTML = '<i class="fa-solid fa-bolt text-amber-400"></i> <span class="text-amber-300">Smart Mask</span>';
+                indicator.title = "Optimization Active: Will only process tissue areas";
+            } else {
+                indicator.innerHTML = '<span class="text-slate-600 text-[9px]">Full Slide</span>';
+                indicator.title = "Processing entire slide";
+            }
+        } else {
+            indicator.classList.add('hidden');
+        }
+    });
+}
+
+
 // --- WORKFLOW BUILDER ---
 window.openBuilder = function() {
     if (!currentSlideFilename) return alert("Select a slide first.");
@@ -486,6 +525,8 @@ window.openBuilder = function() {
     document.getElementById('builderBranches').innerHTML = ''; 
     addBuilderBranch(); 
     document.getElementById('buildWfName').value = "Analysis_" + currentSlideFilename.split('.')[0];
+    
+    setTimeout(updateBuilderIndicators, 100); // Initial check
 }
 window.closeBuilder = function() { document.getElementById('builderModal').classList.add('hidden'); }
 
@@ -498,7 +539,7 @@ window.addBuilderBranch = function() {
     div.innerHTML = `
         <div class="flex justify-between items-center mb-2">
             <div class="flex gap-2 items-center w-full"><span class="text-xs font-bold text-slate-400">BRANCH</span><input type="text" value="Region 1" class="branch-name-input bg-slate-800 border border-slate-600 rounded text-xs px-2 py-1 text-white w-1/2"></div>
-            <button onclick="this.closest('.builder-branch').remove()" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
+            <button onclick="removeBuilderBranch(this)" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
         </div>
         <div class="space-y-2 pl-2 border-l-2 border-slate-700 jobs-container"></div>
         <button onclick="addBuilderJob('${branchId}')" class="mt-2 text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase"><i class="fa-solid fa-plus"></i> Add Job</button>`;
@@ -506,12 +547,30 @@ window.addBuilderBranch = function() {
     addBuilderJob(branchId);
 }
 
+window.removeBuilderBranch = function(btn) {
+    btn.closest('.builder-branch').remove();
+    updateBuilderIndicators();
+}
+
 window.addBuilderJob = function(branchId) {
     const branchDiv = document.querySelector(`.builder-branch[data-id="${branchId}"] .jobs-container`);
     const div = document.createElement('div');
     div.className = "flex gap-2 items-center builder-job";
-    div.innerHTML = `<div class="h-6 w-6 rounded bg-slate-700 flex items-center justify-center text-[10px] text-slate-400 font-mono">J</div><select class="job-type-select bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 flex-1"><option value="SEGMENTATION">Nuclei Segmentation (InstanSeg)</option><option value="TISSUE_MASK">Tissue Mask Generation</option></select><button onclick="this.closest('.builder-job').remove()" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-minus"></i></button>`;
+    div.innerHTML = `
+        <div class="h-6 w-6 rounded bg-slate-700 flex items-center justify-center text-[10px] text-slate-400 font-mono">J</div>
+        <select class="job-type-select bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 flex-1" onchange="updateBuilderIndicators()">
+            <option value="SEGMENTATION">Nuclei Segmentation (InstanSeg)</option>
+            <option value="TISSUE_MASK">Tissue Mask Generation</option>
+        </select>
+        <span class="smart-mask-indicator text-[10px] ml-2 hidden font-mono font-bold"></span>
+        <button onclick="removeBuilderJob(this)" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-minus"></i></button>`;
     branchDiv.appendChild(div);
+    updateBuilderIndicators();
+}
+
+window.removeBuilderJob = function(btn) {
+    btn.closest('.builder-job').remove();
+    updateBuilderIndicators();
 }
 
 window.submitBuilder = async function() {
