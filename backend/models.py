@@ -14,6 +14,9 @@ class JobStatus(str, Enum):
 class JobType(str, Enum):
     SEGMENTATION = "SEGMENTATION"
     TISSUE_MASK = "TISSUE_MASK"
+    # --- NEW TYPES ---
+    VISUALIZATION = "VISUALIZATION" 
+    REPORT = "REPORT"
 
 class JobBase(BaseModel):
     job_type: JobType
@@ -54,7 +57,6 @@ class Workflow(BaseModel):
     slide_name: Optional[str] = None 
     branches: List[Branch] = []
     created_at: datetime = Field(default_factory=datetime.now)
-    # --- NEW FIELD ---
     started_at: Optional[datetime] = None 
     completed_at: Optional[datetime] = None
     status: JobStatus = JobStatus.PENDING

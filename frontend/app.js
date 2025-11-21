@@ -11,23 +11,19 @@ let completedJobIds = new Set();
 let isOverlayVisible = true;
 let currentWorkflowsCache = []; 
 let currentDetailWfId = null;
-
-// --- NEW: Rendering Performance Cache ---
 let allCellsCache = []; // Stores {polygon:[], area:...}
 
+// --- 1. INITIALIZATION ---
 document.addEventListener("DOMContentLoaded", () => {
     initViewer();
     startPolling();
     fetchSlideList();
-    document.getElementById('userIdInput').value = "User_0";
     
-    const modal = document.getElementById('detailsModal');
-    if (modal) {
-        const closeBtn = modal.querySelector('button');
-        if(closeBtn) closeBtn.onclick = () => closeWorkflowDetails();
-    }
+    // Default user
+    document.getElementById('userIdInput').value = "User_0";
 });
 
+// Ensure these are globally available for HTML onclick attributes
 window.setUserId = function(id) {
     document.getElementById('userIdInput').value = "User_" + id;
     fetchStatus(); 
@@ -48,16 +44,27 @@ window.closeWorkflowDetails = function() {
 
 window.deleteWorkflow = async function(id, event) {
     if(event) event.stopPropagation(); 
-    if(!confirm("Delete workflow?")) return;
-    await fetch(`${API_URL}/workflows/${id}`, { method: "DELETE", headers: { 'X-User-ID': document.getElementById('userIdInput').value } });
-    fetchStatus(); 
+    if(!confirm("Are you sure you want to delete this workflow? This will stop any running jobs.")) return;
+    
+    try {
+        await fetch(`${API_URL}/workflows/${id}`, { 
+            method: "DELETE", 
+            headers: { 'X-User-ID': document.getElementById('userIdInput').value } 
+        });
+        fetchStatus(); 
+    } catch(e) { console.error(e); }
 }
 
 window.cancelJob = async function(jobId) {
     if(!confirm("Cancel this specific job?")) return;
     const userId = document.getElementById('userIdInput').value;
-    await fetch(`${API_URL}/jobs/${jobId}`, { method: "DELETE", headers: { 'X-User-ID': userId } });
-    fetchStatus();
+    try {
+        await fetch(`${API_URL}/jobs/${jobId}`, { 
+            method: "DELETE", 
+            headers: { 'X-User-ID': userId } 
+        });
+        fetchStatus();
+    } catch(e) { console.error(e); }
 }
 
 // --- 2. OPENSEADRAGON VIEWER ---
@@ -76,6 +83,7 @@ function initViewer() {
 
     overlay = viewer.svgOverlay();
 
+    // Optimization: Redraw only on view change with debounce
     viewer.addHandler('viewport-change', () => {
         if(window.redrawTimeout) clearTimeout(window.redrawTimeout);
         window.redrawTimeout = setTimeout(drawVisiblePolygons, 50); 
@@ -88,9 +96,11 @@ async function fetchSlideList() {
     try {
         const res = await fetch(`${API_URL}/slides`);
         const data = await res.json();
-        if (data.slides && data.slides.length > 0) renderSlideList(data.slides);
-        else {
-            document.getElementById('slideList').innerHTML = '<div class="text-xs text-red-400 p-2">No .svs files found</div>';
+        if (data.slides && data.slides.length > 0) {
+            renderSlideList(data.slides);
+        } else {
+            document.getElementById('slideList').innerHTML = 
+                '<div class="text-xs text-red-400 p-2">No .svs files found</div>';
             document.getElementById('currentSlideName').innerText = "No Data";
         }
     } catch (e) { console.error(e); }
@@ -188,8 +198,11 @@ async function fetchStatus() {
 
         if (currentDetailWfId) {
             const activeWf = workflows.find(w => w.id === currentDetailWfId);
-            if (activeWf) renderDetailsContent(activeWf);
-            else window.closeWorkflowDetails(); 
+            if (activeWf) {
+                renderDetailsContent(activeWf);
+            } else {
+                window.closeWorkflowDetails(); 
+            }
         }
     } catch (e) { }
 }
@@ -198,10 +211,13 @@ function checkNewResults(workflows) {
     workflows.forEach(wf => {
         wf.branches.forEach(branch => {
             branch.jobs.forEach(async (job) => {
+                // 1. Handle Completed (Notification)
                 if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
                     completedJobIds.add(job.id);
                     loadJobResult(job.id, true); 
                 }
+                
+                // 2. Handle Running (Live Streaming)
                 if (job.status === 'RUNNING' && wf.slide_name === currentSlideFilename) {
                     loadJobResult(job.id, false); 
                 }
@@ -228,17 +244,85 @@ async function loadJobResult(jobId, showNotify) {
         if (res.ok) {
             const resultData = await res.json();
             if (resultData.slide === currentSlideFilename) {
+                // Handle new data structure (cells) or old (polygons)
                 if (resultData.cells) {
                     allCellsCache = resultData.cells;
                 } else if (resultData.polygons) {
                     allCellsCache = resultData.polygons.map(p => ({ polygon: p }));
                 }
 
-                drawVisiblePolygons();
+                drawVisiblePolygons(); // Trigger optimized draw
                 if(showNotify) showNotification(`${resultData.cell_count} Objects`);
             }
         }
     } catch (err) {}
+}
+
+// --- NEW: Function to View Results (Report/Viz) ---
+window.viewJobResult = async function(jobId, type) {
+    try {
+        const res = await fetch(`${API_URL}/results/${jobId}`, { headers: { 'X-User-ID': 'sys' } });
+        if(!res.ok) return alert("Result not found");
+        const data = await res.json();
+        
+        let html = '';
+        
+        if (type === 'REPORT') {
+            html = `
+                <div class="bg-slate-800 p-4 rounded border border-slate-600 text-slate-200 font-mono text-xs">
+                    <h3 class="font-bold text-blue-400 mb-3 text-sm border-b border-slate-700 pb-2">${data.summary || 'Analysis Report'}</h3>
+                    <div class="grid grid-cols-2 gap-y-2 gap-x-4">
+                        ${Object.entries(data.stats || {}).map(([k,v]) => 
+                            `<div class="text-slate-400 capitalize">${k.replace(/_/g, ' ')}:</div>
+                             <div class="text-right text-white font-bold">${typeof v === 'number' ? v.toLocaleString(undefined, {maximumFractionDigits:2}) : v}</div>`
+                        ).join('')}
+                    </div>
+                </div>`;
+        } else if (type === 'VISUALIZATION') {
+             html = `
+                <div class="bg-slate-800 p-4 rounded border border-slate-600 text-slate-200 font-mono text-xs">
+                    <h3 class="font-bold text-purple-400 mb-3 text-sm border-b border-slate-700 pb-2">Visualization Output</h3>
+                    <div class="mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-circle-info text-slate-500"></i>
+                        <span>${data.info || 'Process Complete'}</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                         <div class="text-slate-400">Resolution:</div>
+                         <div class="text-right text-white">${data.resolution || 'N/A'}</div>
+                    </div>
+                    <div class="text-[10px] italic text-slate-500 bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                        * Note: Histogram generation is mocked in this demo environment.
+                    </div>
+                </div>`;
+        } else {
+            // Default fallback for segmentation/tissue mask if clicked
+            html = `
+                <div class="bg-slate-800 p-4 rounded border border-slate-600 text-slate-200 font-mono text-xs">
+                    <h3 class="font-bold text-emerald-400 mb-2 text-sm">Segmentation Stats</h3>
+                    <div>Total Objects: <span class="text-white font-bold">${data.cell_count || 0}</span></div>
+                    <div class="text-xs text-slate-500 mt-2">Overlay is visible on the main viewer.</div>
+                </div>
+            `;
+        }
+        
+        // Create dynamic modal
+        const modal = document.createElement('div');
+        modal.className = "fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center animation-fade-in";
+        modal.innerHTML = `
+            <div class="bg-slate-900 p-6 rounded-xl shadow-2xl border border-slate-700 max-w-md w-full relative transform scale-100 transition-all">
+                <button onclick="this.closest('.fixed').remove()" class="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"><i class="fa-solid fa-xmark fa-lg"></i></button>
+                <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-square-poll-vertical text-blue-500"></i> Result Data
+                </h2>
+                ${html}
+                <div class="mt-6 flex justify-end">
+                    <button onclick="this.closest('.fixed').remove()" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded text-xs font-bold transition-colors">Close</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+    } catch(e) { console.error(e); alert("Error loading result data."); }
 }
 
 // --- 4. VISUALIZATION OPTIMIZATION ---
@@ -251,13 +335,14 @@ function drawVisiblePolygons() {
     const bounds = viewer.viewport.getBounds();
     const fragment = document.createDocumentFragment();
     
+    // Viewport Culling Logic
     const minX = bounds.x * currentSlideWidth;
     const maxX = (bounds.x + bounds.width) * currentSlideWidth;
     const minY = bounds.y * currentSlideWidth;
     const maxY = (bounds.y + bounds.height) * currentSlideWidth;
 
     let count = 0;
-    const maxDraw = 4000; 
+    const maxDraw = 4000; // Safety limit per frame
 
     for (let i = 0; i < allCellsCache.length; i++) {
         if (count >= maxDraw) break;
@@ -266,6 +351,7 @@ function drawVisiblePolygons() {
         const poly = cell.polygon;
         if (!poly || poly.length === 0) continue;
 
+        // Check if first point is in viewport
         const px = poly[0][0];
         const py = poly[0][1];
 
@@ -369,6 +455,16 @@ function calculateWorkflowStats(wf) {
     return totalJobs > 0 ? Math.round(totalWeightedProgress / totalJobs) : 0;
 }
 
+function calculateBranchPct(b) {
+    let total=0, prog=0; 
+    b.jobs.forEach(j=>{
+        total++; 
+        prog+=(j.status==='COMPLETED'?100:(j.status==='RUNNING'?(j.progress||0):0))
+    });
+    return total>0?Math.round(prog/total):0;
+}
+
+// --- SIDEBAR WORKFLOW LIST ---
 function renderWorkflows(workflows) {
     const container = document.getElementById('workflowList');
     if (!workflows || workflows.length === 0) {
@@ -390,13 +486,7 @@ function renderWorkflows(workflows) {
             `<button onclick="deleteWorkflow('${wf.id}', event)" class="text-slate-500 hover:text-red-400 p-1"><i class="fa-solid fa-trash-can"></i></button>` : '';
 
         const branchBars = wf.branches.map(b => {
-            let bJobs = 0, bProg = 0;
-            b.jobs.forEach(j => {
-                bJobs++;
-                if(j.status === 'COMPLETED') bProg += 100;
-                else if(j.status === 'RUNNING') bProg += (j.progress || 0);
-            });
-            const bPct = bJobs > 0 ? Math.round(bProg / bJobs) : 0;
+            const bPct = calculateBranchPct(b);
             return `<div class="h-1 flex-1 rounded-full bg-slate-600 overflow-hidden" title="${b.name}"><div class="h-full bg-blue-400" style="width: ${bPct}%"></div></div>`;
         }).join('');
 
@@ -426,6 +516,7 @@ function renderWorkflows(workflows) {
     container.innerHTML = html;
 }
 
+// --- TREE VISUALIZATION RENDERER (DETAILS MODAL) ---
 function renderDetailsContent(wf) {
     const percent = calculateWorkflowStats(wf);
     const timing = getWorkflowTiming(wf, percent);
@@ -441,129 +532,232 @@ function renderDetailsContent(wf) {
             <span class="text-sm font-mono text-blue-400 bg-blue-900/30 px-2 py-1 rounded">${percent}%</span>
         </div>`;
     document.getElementById('detailWfId').innerText = "ID: " + wf.id;
+
+    // TREE CONTAINER - Updated gap-8 to gap-16 here!
+    let treeHtml = `
+    <div class="flex flex-col items-center pt-4 pb-10 w-full overflow-x-auto">
+        <!-- Root Node -->
+        <div class="flex flex-col items-center mb-0 relative z-10">
+            <div class="bg-slate-900 border border-blue-500/50 text-blue-100 px-4 py-2 rounded-lg shadow-lg font-bold text-sm flex items-center gap-2">
+                <i class="fa-solid fa-play-circle text-blue-400"></i> Start
+            </div>
+            <div class="h-4 w-0.5 bg-slate-600"></div>
+        </div>
+        
+        <!-- Branches Container -->
+        <div class="flex justify-center gap-16 items-start relative">
+             ${wf.branches.length > 1 ? `
+                <div class="absolute h-0.5 bg-slate-600" 
+                     style="top: 0; left: calc(${100/(2*wf.branches.length)}%); right: calc(${100/(2*wf.branches.length)}%);">
+                </div>
+             ` : ''}
+             
+             ${wf.branches.map(renderBranchNode).join('')}
+        </div>
+    </div>`;
     
-    let contentHtml = `<div class="space-y-0 divide-y divide-slate-700">`;
-    wf.branches.forEach(branch => {
-        contentHtml += `<div class="p-4 bg-slate-800"><div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-code-branch text-slate-500 text-xs"></i><span class="text-sm font-bold text-slate-300">${branch.name}</span></div><div class="space-y-2 pl-4 border-l border-slate-700">`;
-        
-        branch.jobs.forEach(job => {
-            let icon = '<i class="fa-regular fa-circle text-slate-600"></i>', textColor = 'text-slate-400', extra = '';
-            let actionBtn = '';
-
-            if(job.status === 'PENDING' || job.status === 'RUNNING') {
-                actionBtn = `<button onclick="cancelJob('${job.id}')" class="text-[10px] text-red-400 hover:text-red-200 border border-red-900 px-1 rounded ml-2">Cancel</button>`;
-            }
-
-            if(job.status === 'RUNNING') {
-                icon = '<i class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>'; textColor = 'text-blue-300';
-                extra = `<span class="text-[10px] font-mono ml-2 bg-blue-900/50 text-blue-200 px-1 rounded">${job.progress || 0}%</span>`;
-            } else if(job.status === 'COMPLETED') {
-                icon = '<i class="fa-solid fa-circle-check text-emerald-400"></i>'; textColor = 'text-emerald-300';
-            } else if(job.status === 'FAILED') {
-                icon = '<i class="fa-solid fa-circle-xmark text-red-400"></i>'; textColor = 'text-red-300';
-            } else if(job.status === 'CANCELLED') {
-                icon = '<i class="fa-solid fa-ban text-slate-400"></i>'; textColor = 'text-slate-400';
-            }
-
-            contentHtml += `
-                <div class="flex justify-between items-center text-sm">
-                    <div class="flex items-center"><span class="${textColor}">${job.job_type}</span>${extra}</div>
-                    <div class="flex items-center gap-2">${actionBtn}${icon}<span class="text-xs font-mono text-slate-500">${job.status}</span></div>
-                </div>`;
-        });
-        contentHtml += `</div></div>`;
-    });
-    contentHtml += `</div>`;
-    document.getElementById('detailContent').innerHTML = contentHtml;
+    document.getElementById('detailContent').innerHTML = treeHtml;
 }
 
-// --- NEW: SMART MASK INDICATORS ---
-function updateBuilderIndicators() {
-    // 1. Check History (Active Workflows)
-    // Note: Only checking ACTIVE workflows. Deleted workflows with orphaned mask files won't trigger this hint
-    // unless we add a specific backend endpoint, but this covers 90% of user cases.
-    const hasHistoryMask = currentWorkflowsCache.some(wf => 
-        wf.slide_name === currentSlideFilename && 
-        wf.branches.some(b => b.jobs.some(j => j.job_type === 'TISSUE_MASK' && j.status === 'COMPLETED'))
-    );
-
-    // 2. Check Current Builder
-    let hasBuilderMask = false;
-    document.querySelectorAll('.job-type-select').forEach(sel => {
-        if (sel.value === 'TISSUE_MASK') hasBuilderMask = true;
-    });
-
-    const isSmartReady = hasHistoryMask || hasBuilderMask;
-
-    // 3. Update UI
-    document.querySelectorAll('.builder-job').forEach(jobDiv => {
-        const select = jobDiv.querySelector('.job-type-select');
-        const indicator = jobDiv.querySelector('.smart-mask-indicator');
+function renderBranchNode(branch) {
+    return `
+    <div class="flex flex-col items-center relative">
+        <!-- Branch Connector Line (Up to bar) -->
+        <div class="h-4 w-0.5 bg-slate-600"></div>
         
-        if(!indicator) return; // Safety
+        <!-- Branch Header -->
+        <div class="bg-slate-800 border border-slate-600 text-slate-200 px-3 py-1.5 rounded-md text-xs font-bold shadow mb-4 z-10 min-w-[120px] text-center flex flex-col items-center gap-1">
+             <span>${branch.name}</span>
+             <span class="text-[9px] font-mono text-slate-400">${branch.status}</span>
+        </div>
 
-        if (select.value === 'SEGMENTATION') {
-            indicator.classList.remove('hidden');
-            if (isSmartReady) {
-                indicator.innerHTML = '<i class="fa-solid fa-bolt text-amber-400"></i> <span class="text-amber-300">Smart Mask</span>';
-                indicator.title = "Optimization Active: Will only process tissue areas";
-            } else {
-                indicator.innerHTML = '<span class="text-slate-600 text-[9px]">Full Slide</span>';
-                indicator.title = "Processing entire slide";
-            }
-        } else {
-            indicator.classList.add('hidden');
-        }
-    });
+        <!-- Jobs Stack -->
+        <div class="flex flex-col items-center gap-0">
+            ${branch.jobs.map((job, idx) => renderJobNode(job, idx, branch.jobs.length)).join('')}
+        </div>
+    </div>`;
 }
 
+function renderJobNode(job, idx, total) {
+    let borderClass = "border-slate-600";
+    let bgClass = "bg-slate-800";
+    let icon = '<i class="fa-solid fa-circle text-slate-600"></i>';
+    let statusText = "PENDING";
 
-// --- WORKFLOW BUILDER ---
+    if (job.status === 'RUNNING') {
+        borderClass = "border-blue-500 animate-pulse";
+        bgClass = "bg-slate-800/80";
+        icon = '<i class="fa-solid fa-spinner fa-spin text-blue-400"></i>';
+        statusText = `${job.progress}%`;
+    } else if (job.status === 'COMPLETED') {
+        borderClass = "border-emerald-500";
+        bgClass = "bg-emerald-900/10";
+        icon = '<i class="fa-solid fa-check text-emerald-400"></i>';
+        statusText = "DONE";
+    } else if (job.status === 'FAILED') {
+        borderClass = "border-red-500";
+        icon = '<i class="fa-solid fa-xmark text-red-400"></i>';
+        statusText = "FAIL";
+    } else if (job.status === 'CANCELLED') {
+        borderClass = "border-slate-500";
+        icon = '<i class="fa-solid fa-ban text-slate-400"></i>';
+        statusText = "STOP";
+    }
+
+    // Action Button logic: Cancel if running, View Result if completed
+    let actionBtn = '';
+    if(job.status === 'PENDING' || job.status === 'RUNNING') {
+        actionBtn = `<button onclick="cancelJob('${job.id}')" class="absolute -right-8 top-2 text-red-400 hover:text-white text-[10px] bg-slate-900 rounded p-1 border border-slate-700 transition-colors" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+    } else if (job.status === 'COMPLETED') {
+        // Show "View" button for all completed jobs (Report, Viz, even Seg/Mask to show counts)
+        actionBtn = `<button onclick="viewJobResult('${job.id}', '${job.job_type}')" class="absolute -right-8 top-2 text-blue-400 hover:text-white text-[10px] bg-slate-900 rounded p-1 border border-slate-700 transition-colors" title="View Result"><i class="fa-solid fa-eye"></i></button>`;
+    }
+
+    return `
+    ${idx > 0 ? '<div class="job-arrow"><i class="fa-solid fa-arrow-down"></i></div>' : ''}
+    <div class="tree-node relative group w-40">
+        <div class="${bgClass} border ${borderClass} rounded p-2 shadow-sm flex items-center gap-2 relative z-10 transition-all hover:scale-105">
+            <div class="text-xs text-slate-300 flex-1 font-medium truncate" title="${job.job_type}">${job.job_type}</div>
+            <div class="text-[10px] font-mono text-slate-400 flex items-center gap-1">
+                ${statusText} ${icon}
+            </div>
+        </div>
+        ${actionBtn}
+    </div>`;
+}
+
+// --- TREE-STYLE WORKFLOW BUILDER ---
 window.openBuilder = function() {
     if (!currentSlideFilename) return alert("Select a slide first.");
     document.getElementById('builderModal').classList.remove('hidden');
-    document.getElementById('builderBranches').innerHTML = ''; 
-    addBuilderBranch(); 
+    const container = document.getElementById('builderBranches');
+    container.innerHTML = ''; 
+    
+    // Set default name
     document.getElementById('buildWfName').value = "Analysis_" + currentSlideFilename.split('.')[0];
     
-    setTimeout(updateBuilderIndicators, 100); // Initial check
+    // Render the "Add Branch" button FIRST so logic works correctly
+    renderAddBranchBtn();
+
+    // Start with 1 branch by default (this will insert BEFORE the Add button)
+    addBuilderBranch();
+    
+    setTimeout(updateBuilderIndicators, 100);
 }
+
 window.closeBuilder = function() { document.getElementById('builderModal').classList.add('hidden'); }
+
+function renderAddBranchBtn() {
+    const container = document.getElementById('builderBranches');
+    // Ensure no duplicates
+    if (document.getElementById('btn-add-branch-wrapper')) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.id = 'btn-add-branch-wrapper';
+    wrapper.className = "flex flex-col items-center justify-start min-w-[120px] h-full pt-8 opacity-50 hover:opacity-100 transition-all group";
+    
+    wrapper.innerHTML = `
+        <!-- Dashed Line -->
+        <div class="h-0.5 w-8 bg-slate-600 mb-2 hidden"></div>
+        
+        <button onclick="addBuilderBranch()" class="border-2 border-dashed border-slate-600 group-hover:border-blue-500/50 bg-slate-800/30 rounded-lg p-6 flex flex-col items-center gap-2 text-slate-500 group-hover:text-blue-400 transition-all shadow-inner">
+            <div class="h-10 w-10 rounded-full bg-slate-700 flex items-center justify-center mb-1">
+                <i class="fa-solid fa-plus text-lg"></i>
+            </div>
+            <span class="font-bold text-[10px] uppercase tracking-wide">Add Branch</span>
+        </button>
+    `;
+    container.appendChild(wrapper);
+}
 
 window.addBuilderBranch = function() {
     const container = document.getElementById('builderBranches');
-    const branchId = 'branch_' + Date.now();
+    const addBtnWrapper = document.getElementById('btn-add-branch-wrapper');
+    
+    const branchId = 'branch_' + Date.now() + Math.random();
+    
+    // Create Branch Visual Container (Column)
     const div = document.createElement('div');
-    div.className = "bg-slate-900 p-3 rounded border border-slate-700 builder-branch";
+    div.className = "flex flex-col items-center min-w-[200px] builder-branch relative";
     div.dataset.id = branchId;
+    
     div.innerHTML = `
-        <div class="flex justify-between items-center mb-2">
-            <div class="flex gap-2 items-center w-full"><span class="text-xs font-bold text-slate-400">BRANCH</span><input type="text" value="Region 1" class="branch-name-input bg-slate-800 border border-slate-600 rounded text-xs px-2 py-1 text-white w-1/2"></div>
-            <button onclick="removeBuilderBranch(this)" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
+        <!-- Branch Head -->
+        <div class="relative w-full flex flex-col items-center">
+            <!-- Top connector lines (for tree effect) -->
+            <div class="h-4 w-0.5 bg-slate-600 mb-0 branch-line-top hidden"></div> 
+            
+            <div class="bg-slate-800 border border-slate-600 p-2 rounded shadow-lg z-10 w-full flex flex-col gap-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase">Branch</span>
+                    <button onclick="removeBuilderBranch(this)" class="text-red-400 hover:text-white text-[10px]"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <input type="text" value="Branch ${document.querySelectorAll('.builder-branch').length + 1}" 
+                       class="branch-name-input bg-slate-900 border border-slate-700 rounded text-xs px-2 py-1 text-white w-full text-center focus:border-blue-500 outline-none transition-colors">
+            </div>
+            <!-- Jobs Container (Vertical Stack) -->
+            <div class="flex flex-col items-center w-full pt-2 jobs-container gap-2"></div>
+            
+            <!-- Add Job Button -->
+            <button onclick="addBuilderJob(this)" class="mt-2 text-blue-400 hover:text-blue-300 text-xs border border-dashed border-blue-500/30 rounded px-3 py-1 w-full hover:bg-blue-500/10 transition-colors">
+                <i class="fa-solid fa-plus"></i> Add Job
+            </button>
         </div>
-        <div class="space-y-2 pl-2 border-l-2 border-slate-700 jobs-container"></div>
-        <button onclick="addBuilderJob('${branchId}')" class="mt-2 text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase"><i class="fa-solid fa-plus"></i> Add Job</button>`;
-    container.appendChild(div);
-    addBuilderJob(branchId);
+    `;
+    
+    // Insert BEFORE the "Add Branch" button
+    if (addBtnWrapper) {
+        container.insertBefore(div, addBtnWrapper);
+    } else {
+        container.appendChild(div);
+    }
+    
+    // Add initial job
+    const btn = div.querySelector('button[onclick^="addBuilderJob"]');
+    addBuilderJob(btn);
+    
+    updateBranchLines();
+}
+
+window.updateBranchLines = function() {
+    const branches = document.querySelectorAll('.builder-branch');
+    // Logic for tree connectors could go here (e.g. showing horizontal bar)
+    // For now, just ensure vertical stems are visible
+    branches.forEach(b => {
+        b.querySelector('.branch-line-top').classList.remove('hidden');
+    });
 }
 
 window.removeBuilderBranch = function(btn) {
     btn.closest('.builder-branch').remove();
+    updateBranchLines();
     updateBuilderIndicators();
 }
 
-window.addBuilderJob = function(branchId) {
-    const branchDiv = document.querySelector(`.builder-branch[data-id="${branchId}"] .jobs-container`);
+window.addBuilderJob = function(btn) {
+    const branchDiv = btn.closest('.builder-branch').querySelector('.jobs-container');
     const div = document.createElement('div');
-    div.className = "flex gap-2 items-center builder-job";
+    div.className = "builder-job w-full relative";
+    
+    // If not first job, show arrow
+    const arrow = branchDiv.children.length > 0 ? '<div class="text-center text-slate-600 text-[10px] py-0.5"><i class="fa-solid fa-arrow-down"></i></div>' : '';
+    
     div.innerHTML = `
-        <div class="h-6 w-6 rounded bg-slate-700 flex items-center justify-center text-[10px] text-slate-400 font-mono">J</div>
-        <select class="job-type-select bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 flex-1" onchange="updateBuilderIndicators()">
-            <option value="SEGMENTATION">Nuclei Segmentation (InstanSeg)</option>
-            <option value="TISSUE_MASK">Tissue Mask Generation</option>
-        </select>
-        <span class="smart-mask-indicator text-[10px] ml-2 hidden font-mono font-bold"></span>
-        <button onclick="removeBuilderJob(this)" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-minus"></i></button>`;
+        ${arrow}
+        <div class="bg-slate-700/50 border border-slate-600 rounded p-2 flex items-center gap-2 group hover:border-blue-500/50 transition-colors">
+            <div class="h-6 w-6 rounded bg-slate-800 flex items-center justify-center text-[10px] text-slate-400 font-mono shadow-inner">J</div>
+            <div class="flex-1 flex flex-col">
+                <select class="job-type-select bg-transparent text-white text-xs outline-none font-medium" onchange="updateBuilderIndicators()">
+                    <option value="SEGMENTATION">Nuclei Segmentation</option>
+                    <option value="TISSUE_MASK">Tissue Mask</option>
+                    <option value="VISUALIZATION">Histogram Viz</option>
+                    <option value="REPORT">Generate Report</option>
+                </select>
+                <span class="smart-mask-indicator text-[9px] text-amber-400 hidden"><i class="fa-solid fa-bolt"></i> Smart Optimized</span>
+            </div>
+            <button onclick="removeBuilderJob(this)" class="text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><i class="fa-solid fa-xmark"></i></button>
+        </div>`;
+        
     branchDiv.appendChild(div);
     updateBuilderIndicators();
 }
@@ -573,23 +767,82 @@ window.removeBuilderJob = function(btn) {
     updateBuilderIndicators();
 }
 
+// --- UPDATED: Smart Optimization Logic (Per Branch) ---
+function updateBuilderIndicators() {
+    // 1. Check History for this slide (Server-side completed masks)
+    const hasHistoryMask = currentWorkflowsCache.some(wf => 
+        wf.slide_name === currentSlideFilename && 
+        wf.branches.some(b => b.jobs.some(j => j.job_type === 'TISSUE_MASK' && j.status === 'COMPLETED'))
+    );
+
+    // 2. Check Local Dependencies (Iterate PER BRANCH)
+    document.querySelectorAll('.builder-branch').forEach(branchDiv => {
+        let hasLocalMask = false;
+
+        // Get all jobs in this branch in sequential order
+        branchDiv.querySelectorAll('.builder-job').forEach(jobDiv => {
+            const select = jobDiv.querySelector('.job-type-select');
+            const indicator = jobDiv.querySelector('.smart-mask-indicator');
+            
+            if(!select || !indicator) return;
+
+            // Determine visibility for THIS job
+            if (select.value === 'SEGMENTATION') {
+                // Smart optimized if: Global history exists OR a mask is upstream in this branch
+                if (hasHistoryMask || hasLocalMask) {
+                    indicator.classList.remove('hidden');
+                } else {
+                    indicator.classList.add('hidden');
+                }
+            } else {
+                indicator.classList.add('hidden');
+            }
+
+            // Update state for the NEXT job in this branch
+            // (If this job IS a mask, set flag to true for subsequent jobs)
+            if (select.value === 'TISSUE_MASK') {
+                hasLocalMask = true;
+            }
+        });
+    });
+}
+
 window.submitBuilder = async function() {
     const userId = document.getElementById('userIdInput').value;
     const branches = [];
+    
     document.querySelectorAll('.builder-branch').forEach(bDiv => {
+        const branchName = bDiv.querySelector('.branch-name-input').value;
         const jobs = [];
-        bDiv.querySelectorAll('.builder-job').forEach(jDiv => jobs.push({ job_type: jDiv.querySelector('.job-type-select').value, params: {} }));
-        if (jobs.length > 0) branches.push({ branch_name: bDiv.querySelector('.branch-name-input').value, jobs: jobs });
+        
+        bDiv.querySelectorAll('.job-type-select').forEach(sel => {
+            jobs.push({ job_type: sel.value, params: {} });
+        });
+        
+        if (jobs.length > 0) {
+            branches.push({ branch_name: branchName, jobs: jobs });
+        }
     });
-    if (branches.length === 0) return alert("Add at least one job.");
+
+    if (branches.length === 0) return alert("Please add at least one branch with jobs.");
 
     try {
         const res = await fetch(`${API_URL}/workflows/`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-User-ID": userId },
-            body: JSON.stringify({ workflow_name: document.getElementById('buildWfName').value, slide_name: currentSlideFilename, branches: branches })
+            body: JSON.stringify({ 
+                workflow_name: document.getElementById('buildWfName').value, 
+                slide_name: currentSlideFilename, 
+                branches: branches 
+            })
         });
-        if (!res.ok) return alert((await res.json()).detail || "Error");
-        closeBuilder(); fetchStatus();
+        
+        if (!res.ok) {
+            const err = await res.json();
+            return alert(err.detail || "Error submitting workflow");
+        }
+        
+        closeBuilder(); 
+        fetchStatus();
     } catch (e) { alert("Error: " + e); }
 }
