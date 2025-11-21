@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        wsi_tiler.py
+# Description: Handles Whole Slide Image (WSI) tiling, caching, and metadata retrieval for the viewer.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 import os
 import io
 from threading import Lock

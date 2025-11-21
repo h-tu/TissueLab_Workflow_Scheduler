@@ -24,9 +24,10 @@ logger = logging.getLogger(__name__)
 try:
     from instanseg import InstanSeg
     INSTANSEG_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError) as e:
+    # Catch OSError (missing libgomp) to prevent worker crash
     INSTANSEG_AVAILABLE = False
-    logger.warning("InstanSeg not installed. Inference will be skipped or mocked.")
+    logger.warning(f"InstanSeg not available (Dependency missing?): {e}")
 
 TILE_SIZE = 512       
 OVERLAP = 64          
@@ -41,6 +42,7 @@ class MLWorker:
         else:
             self.device = "cpu"
         self.model = None
+        
         if INSTANSEG_AVAILABLE:
             try:
                 self.model = InstanSeg(model_type="brightfield_nuclei", device=self.device, verbosity=0)
@@ -53,10 +55,19 @@ class MLWorker:
         std_dev = np.std(gray)
         return mean_val > threshold and std_dev < 15
 
+    def _get_data_dir(self):
+        # Resolves to /app/data in Docker or ../data locally
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, "data")
+
     def _save_json(self, job_id, filename, cells_data, user_id, job_type, extra_data=None):
         output_filename = f"results_{job_id}.json"
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        output_path = os.path.join(base_dir, output_filename)
+        data_dir = self._get_data_dir()
+        
+        # Ensure directory exists (though usually mapped by Docker)
+        os.makedirs(data_dir, exist_ok=True)
+        
+        output_path = os.path.join(data_dir, output_filename)
         temp_path = output_path + ".tmp"
         
         content = {
@@ -76,8 +87,9 @@ class MLWorker:
             logger.error(f"Error saving result: {e}")
 
     def _find_latest_mask(self, slide_filename, user_id):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        files = glob.glob(os.path.join(base_dir, "results_*.json"))
+        data_dir = self._get_data_dir()
+        files = glob.glob(os.path.join(data_dir, "results_*.json"))
+        
         candidate_masks = []
         for fpath in files:
             try:
@@ -118,7 +130,10 @@ class MLWorker:
             return self._generate_report(slide_path, job_id, user_id, progress_callback)
 
         # --- SEGMENTATION LOGIC ---
-        if not self.model: raise RuntimeError("Model not loaded")
+        if not self.model: 
+            # Fallback if model failed to load (missing libs)
+            logger.error("Model not loaded. Cannot run segmentation.")
+            raise RuntimeError("Model not loaded (Check Docker dependencies)")
         
         slide = openslide.OpenSlide(slide_path)
         w, h = slide.dimensions
@@ -178,7 +193,6 @@ class MLWorker:
         return f"results_{job_id}.json"
 
     def _generate_tissue_mask(self, slide_path, job_id, user_id):
-        # (Existing logic, simplified for brevity)
         filename = os.path.basename(slide_path)
         slide = openslide.OpenSlide(slide_path)
         thumb = np.array(slide.get_thumbnail((2048, 2048)))
@@ -199,20 +213,16 @@ class MLWorker:
         self._save_json(job_id, filename, cells, user_id, "TISSUE_MASK")
         return f"results_{job_id}.json"
 
-    # --- NEW: VISUALIZATION TASK ---
     def _generate_visualization(self, slide_path, job_id, user_id, cb):
-        """Generates a color histogram or heatmap representation."""
         filename = os.path.basename(slide_path)
         slide = openslide.OpenSlide(slide_path)
         
         if cb: cb(20)
-        # Simulate processing time for demo
         time.sleep(2) 
         
         thumb = np.array(slide.get_thumbnail((1024, 1024)))
         if cb: cb(50)
         
-        # Simple Image Processing: CLAHE (Contrast Limited Adaptive Histogram Equalization)
         lab = cv2.cvtColor(thumb, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
@@ -220,24 +230,18 @@ class MLWorker:
         limg = cv2.merge((cl,a,b))
         final = cv2.cvtColor(limg, cv2.COLOR_LAB2RGB)
         
-        # We don't actually save the image in this strict JSON architecture, 
-        # but we return "cells" as dummy regions to visualize the 'Process'
         if cb: cb(100)
         
-        # Fake "result" metadata
         meta = {"info": "Histogram Equalization Complete", "resolution": "1024x1024"}
         self._save_json(job_id, filename, [], user_id, "VISUALIZATION", meta)
         return f"results_{job_id}.json"
 
-    # --- NEW: REPORT TASK ---
     def _generate_report(self, slide_path, job_id, user_id, cb):
-        """Aggregates previous results into a summary."""
         filename = os.path.basename(slide_path)
         if cb: cb(10)
         
-        # Scan for previous results for this slide
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        files = glob.glob(os.path.join(base_dir, "results_*.json"))
+        data_dir = self._get_data_dir()
+        files = glob.glob(os.path.join(data_dir, "results_*.json"))
         
         total_nuclei = 0
         total_tissue_area = 0
@@ -250,7 +254,6 @@ class MLWorker:
                     if d.get("job_type") == "SEGMENTATION":
                         total_nuclei += d.get("cell_count", 0)
                     elif d.get("job_type") == "TISSUE_MASK":
-                         # rough area sum
                          for c in d.get("cells", []):
                              total_tissue_area += c.get("area", 0)
             except: continue
@@ -270,7 +273,6 @@ class MLWorker:
         return f"results_{job_id}.json"
 
     def _mask_to_polygons(self, mask):
-        # (Existing logic)
         polys = []
         for uid in np.unique(mask):
             if uid == 0: continue

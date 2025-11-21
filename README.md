@@ -60,8 +60,9 @@ If you prefer running without Docker:
 
 1.  **Create Environment:**
     ```bash
-    conda create -n tissuelab python=3.10
+    conda create -n tissuelab python=3.10 openslide -c conda-forge -y
     conda activate tissuelab
+
     pip install -r requirements.txt
     ```
 

@@ -8,7 +8,7 @@
 
 cleanup() {
     echo ""
-    echo "🛑 Shutting down servers..."
+    echo "Shutting down servers..."
     if [ -n "$BACKEND_PID" ]; then
         kill $BACKEND_PID 2>/dev/null
     fi
@@ -21,25 +21,25 @@ cleanup() {
 trap cleanup SIGINT
 
 if [[ "$CONDA_DEFAULT_ENV" != "tissuelab" ]]; then
-    echo "🔄 'tissuelab' env not active. Attempting to activate..."
+    echo "'tissuelab' env not active. Attempting to activate..."
     CONDA_BASE=$(conda info --base)
     if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
         source "$CONDA_BASE/etc/profile.d/conda.sh"
         conda activate tissuelab
     else
-        echo "⚠️  Could not find conda.sh. Please run 'conda activate tissuelab' manually."
+        echo "Could not find conda.sh. Please run 'conda activate tissuelab' manually."
         exit 1
     fi
 fi
 
-echo "✅ Environment: $CONDA_DEFAULT_ENV"
+echo "Environment: $CONDA_DEFAULT_ENV"
 
-echo "🚀 Starting Backend (Port 8000)..."
+echo "Starting Backend (Port 8000)..."
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 sleep 2
 
-echo "🎨 Starting Frontend (Port 3000)..."
+echo "Starting Frontend (Port 3000)..."
 python -m http.server 3000 --directory frontend &
 FRONTEND_PID=$!
 

@@ -33,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- NEW: PROMETHEUS INSTRUMENTATION ---
+# --- PROMETHEUS INSTRUMENTATION ---
 Instrumentator().instrument(app).expose(app)
 
 scheduler = Scheduler()
@@ -101,7 +101,6 @@ async def delete_workflow(workflow_id: str, user_id: str = Depends(get_user_id))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
-# --- NEW: Cancel Job Endpoint ---
 @app.delete("/jobs/{job_id}")
 async def cancel_job(job_id: str, user_id: str = Depends(get_user_id)):
     try:
@@ -152,7 +151,8 @@ async def get_job_results(job_id: str, user_id: str = Depends(get_user_id)):
         safe_id = os.path.basename(job_id) 
         filename = f"results_{safe_id}.json"
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        filepath = os.path.join(base_dir, filename)
+        
+        filepath = os.path.join(base_dir, "data", filename)
         
         if not os.path.exists(filepath):
              raise HTTPException(status_code=404, detail="Result file not found")

@@ -15,5 +15,5 @@ prometheus_fastapi_instrumentator
 opencv-python-headless
 openslide-python
 Pillow
-instanseg
+instanseg-torch
 requests
