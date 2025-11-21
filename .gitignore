@@ -1,6 +1,4 @@
-/data/inputs
+/data/inputs/
 /backend/__pycache__
 data/.DS_Store
 .DS_Store
-backend/scheduler_state.json
-*.json
