@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TissueLab Scheduler | 24h Challenge</title>
+
+    <link rel="icon" type="image/svg+xml" href="https://www.zhihuang.ai/images/upenn_block_huang_lab.svg">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+    <script src="https://openseadragon.github.io/svg-overlay/openseadragon-svg-overlay.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+
+    <style>
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .osd-container { background-color: #0f172a; }
+        .slide-item { transition: all 0.2s ease; }
+        
+        /* Segmentation Overlay Styles */
+        .cell-polygon {
+            fill: rgba(255, 0, 0, 0.1);
+            stroke: #ef4444; /* Red */
+            stroke-width: 2; 
+            vector-effect: non-scaling-stroke;
+            cursor: pointer;
+        }
+        .cell-polygon:hover {
+            fill: rgba(255, 0, 0, 0.4);
+            stroke: #f87171;
+        }
+
+        /* Tree Visualization CSS */
+        .tree-node { position: relative; transition: all 0.3s ease; }
+        .job-arrow { display: flex; justify-content: center; align-items: center; height: 20px; color: #64748b; font-size: 10px; }
+        
+        /* Builder Specific */
+        .builder-canvas {
+            background-image: radial-gradient(#334155 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-50 h-screen flex overflow-hidden font-sans">
+
+    <!-- LEFT SIDEBAR -->
+    <div class="w-96 flex flex-col border-r border-slate-700 bg-slate-800 shadow-xl z-20">
+        <div class="p-6 border-b border-slate-700 bg-slate-900">
+            <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-teal-400 flex items-center">
+                <img src="https://media.githubusercontent.com/media/zhihuanglab/TissueLab/refs/heads/main/app/TissueLab_logo.ico" class="w-6 h-6 mr-2 shadow-sm rounded-md bg-white/10 p-0.5">
+                TissueLab
+            </h1>
+            <div class="mt-4">
+                <div class="flex items-center justify-between">
+                    <div class="text-xs text-slate-400">Current User:</div>
+                    <input type="text" id="userIdInput" value="User_0" 
+                           class="bg-slate-700 text-xs px-2 py-1 rounded border border-slate-600 focus:border-blue-500 outline-none w-32 text-right">
+                </div>
+                <div class="flex justify-end gap-1 mt-2">
+                    <button onclick="setUserId(0)" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] px-2 py-1 rounded border border-slate-600 transition-colors">0</button>
+                    <button onclick="setUserId(1)" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] px-2 py-1 rounded border border-slate-600 transition-colors">1</button>
+                    <button onclick="setUserId(2)" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] px-2 py-1 rounded border border-slate-600 transition-colors">2</button>
+                    <button onclick="setUserId(3)" class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] px-2 py-1 rounded border border-slate-600 transition-colors">3</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 p-4">
+            <div class="bg-slate-700/50 p-3 rounded-lg border border-slate-600">
+                <div class="text-xs text-slate-400 uppercase font-bold">Active Users</div>
+                <div class="text-2xl font-mono font-bold text-teal-400" id="activeUsersCount">0/3</div>
+            </div>
+            <div class="bg-slate-700/50 p-3 rounded-lg border border-slate-600">
+                <div class="text-xs text-slate-400 uppercase font-bold">Global GPU</div>
+                <div class="text-2xl font-mono font-bold text-purple-400" id="gpuWorkersCount">0/4</div>
+            </div>
+            <div class="bg-slate-700/50 p-3 rounded-lg border border-slate-600">
+                <div class="text-xs text-slate-400 uppercase font-bold">Pending Jobs</div>
+                <div class="text-2xl font-mono font-bold text-amber-400" id="pendingJobsCount">0</div>
+            </div>
+            <div class="bg-slate-700/50 p-3 rounded-lg border border-slate-600">
+                <div class="text-xs text-slate-400 uppercase font-bold">Avg Latency</div>
+                <div class="text-xl font-mono font-bold text-blue-400" id="avgLatency">0.0s</div>
+            </div>
+        </div>
+
+        <div class="px-4 pb-2">
+            <div class="text-xs text-slate-400 uppercase font-bold mb-2">Available Slides</div>
+            <div id="slideList" class="space-y-1 max-h-40 overflow-y-auto scrollbar-hide bg-slate-900/50 p-2 rounded border border-slate-700">
+                <div class="text-xs text-slate-500 italic p-2">Loading slides...</div>
+            </div>
+        </div>
+
+        <div class="px-4 py-4 space-y-2">
+            <button onclick="openBuilder()" 
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition-all transform hover:scale-[1.02] flex items-center justify-center gap-2">
+                <i class="fa-solid fa-plus"></i> Create Workflow
+            </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-4 pb-4 space-y-3 scrollbar-hide" id="workflowList">
+            <div class="text-center text-slate-500 text-sm mt-10">No active workflows</div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="flex-1 relative flex flex-col group">
+        <div class="absolute top-4 right-4 z-10 pointer-events-none">
+            <div class="flex gap-2 pointer-events-auto">
+                <button id="btnToggleOverlay" onclick="toggleOverlay()" class="bg-slate-900/80 hover:bg-slate-700 text-slate-400 p-2 rounded-full w-10 h-10 border border-slate-700 shadow-lg transition-colors flex items-center justify-center" title="Toggle Segmentation Overlay">
+                    <i class="fa-regular fa-eye"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="absolute bottom-4 left-4 z-10 pointer-events-none">
+            <div class="bg-slate-900/80 backdrop-blur text-white px-4 py-2 rounded-full text-sm font-medium pointer-events-auto border border-slate-700 shadow-lg flex items-center gap-2">
+                <i class="fa-regular fa-file-image text-blue-400"></i>
+                <span id="currentSlideName">No Image Loaded</span>
+            </div>
+        </div>
+
+        <div id="selectSlidePrompt" class="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-900 text-slate-500">
+            <i class="fa-regular fa-images text-6xl mb-4 text-slate-700"></i>
+            <div class="text-xl font-light">Select a slide from the left to begin</div>
+        </div>
+
+        <div id="openseadragon1" class="w-full h-full osd-container"></div>
+        
+        <div id="notificationToast" class="absolute top-6 left-1/2 transform -translate-x-1/2 -translate-y-32 transition-transform duration-500 bg-slate-800/90 backdrop-blur border border-green-500/30 text-white px-6 py-2 rounded-full shadow-2xl flex items-center gap-3 z-50 pointer-events-none">
+            <i class="fa-solid fa-circle-check text-green-400 text-lg"></i>
+            <span class="font-medium text-sm" id="notificationText">Processing Complete</span>
+        </div>
+
+        <div id="viewerLoader" class="absolute inset-0 bg-slate-900 z-40 flex flex-col items-center justify-center hidden">
+            <i class="fa-solid fa-circle-notch fa-spin text-4xl text-blue-500 mb-4"></i>
+            <div class="text-slate-300 mt-2">Loading High-Res Slide...</div>
+        </div>
+    </div>
+
+    <!-- WORKFLOW BUILDER MODAL (Redesigned for Horizontal Layout) -->
+    <div id="builderModal" class="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center hidden">
+        <div class="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-[90%] max-w-[1200px] h-[80vh] flex flex-col">
+            <!-- Header -->
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 rounded-t-xl">
+                <div class="flex items-center gap-4">
+                    <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-diagram-project mr-2 text-blue-400"></i>Workflow Builder</h3>
+                    <input type="text" id="buildWfName" value="Analysis_Job" 
+                           class="bg-slate-800 border border-slate-600 rounded px-3 py-1 text-sm text-white focus:border-blue-500 outline-none w-64">
+                </div>
+                <button onclick="closeBuilder()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <!-- Canvas -->
+            <div class="p-6 overflow-x-auto flex-1 builder-canvas flex items-center">
+                <!-- Builder Scroll Container -->
+                <div id="builderBranches" class="flex items-start gap-8 px-10 min-w-full">
+                    <!-- Branches will be injected here -->
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="p-4 border-t border-slate-700 bg-slate-900 rounded-b-xl flex justify-end gap-2">
+                <button onclick="closeBuilder()" class="px-4 py-2 text-slate-400 hover:text-white text-sm">Cancel</button>
+                <button onclick="submitBuilder()" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold shadow-lg">
+                    Submit Workflow
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WORKFLOW DETAILS MODAL -->
+    <div id="detailsModal" class="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center hidden">
+        <div class="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-[900px] max-h-[90vh] flex flex-col">
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 rounded-t-xl">
+                <div>
+                    <h3 class="text-lg font-bold text-white" id="detailWfName">Workflow Details</h3>
+                    <div class="text-xs text-slate-400 font-mono" id="detailWfId">ID: ...</div>
+                </div>
+                <button onclick="closeWorkflowDetails()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1 bg-slate-800/50" id="detailContent">
+                <!-- Tree Graph will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

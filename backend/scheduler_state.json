@@ -1,0 +1,293 @@
+{
+  "active_workflows": [
+    {
+      "id": "4fe5a871-acdc-45de-b4e7-1cb39f0b8016",
+      "user_id": "User_0",
+      "name": "Analysis_CMU-1-Small-Region",
+      "slide_name": "CMU-1-Small-Region.svs",
+      "branches": [
+        {
+          "id": "8fc8d87d-bb54-458a-9e95-9a7c9224c7a7",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "SEGMENTATION",
+              "params": {
+                "slide_name": "CMU-1-Small-Region.svs"
+              },
+              "id": "6c85ae96-ed99-40ec-a5fd-6122dc8bc432",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T17:45:06.846221",
+              "started_at": "2025-11-21T17:45:07.350647",
+              "completed_at": "2025-11-21T17:47:24.763662",
+              "result_data": {
+                "file": "results_6c85ae96-ed99-40ec-a5fd-6122dc8bc432.json"
+              },
+              "error_msg": null
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:45:06.846713",
+      "started_at": "2025-11-21T17:45:07.350387",
+      "completed_at": "2025-11-21T17:47:25.384777",
+      "status": "COMPLETED"
+    },
+    {
+      "id": "a30c2dbd-5014-41b6-9fb0-aac086998de9",
+      "user_id": "User_1",
+      "name": "Analysis_JP2K-33003-1",
+      "slide_name": "JP2K-33003-1.svs",
+      "branches": [
+        {
+          "id": "f3794553-5e29-4dc0-b613-89a21d76c5f3",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "TISSUE_MASK",
+              "params": {
+                "slide_name": "JP2K-33003-1.svs"
+              },
+              "id": "dddb5a0a-77c3-4548-885a-a6eb8a0c46eb",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T17:46:36.137434",
+              "started_at": "2025-11-21T17:46:36.227932",
+              "completed_at": "2025-11-21T17:46:38.830131",
+              "result_data": {
+                "file": "results_dddb5a0a-77c3-4548-885a-a6eb8a0c46eb.json"
+              },
+              "error_msg": null
+            },
+            {
+              "job_type": "SEGMENTATION",
+              "params": {
+                "slide_name": "JP2K-33003-1.svs"
+              },
+              "id": "205cfae7-b596-420c-82af-7c908c1fbd37",
+              "status": "FAILED",
+              "progress": 39,
+              "created_at": "2025-11-21T17:46:36.137468",
+              "started_at": "2025-11-21T17:46:39.267070",
+              "completed_at": null,
+              "result_data": null,
+              "error_msg": "System restart detected."
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:46:36.137504",
+      "started_at": "2025-11-21T17:46:36.227883",
+      "completed_at": null,
+      "status": "FAILED"
+    },
+    {
+      "id": "ad628892-030f-49bd-babd-4df22c5a9610",
+      "user_id": "User_2",
+      "name": "Analysis_JP2K-33003-2",
+      "slide_name": "JP2K-33003-2.svs",
+      "branches": [
+        {
+          "id": "3d19c8f3-07d4-40b7-866b-a4b891ff5e61",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "TISSUE_MASK",
+              "params": {
+                "slide_name": "JP2K-33003-2.svs"
+              },
+              "id": "fe125c47-2745-4939-807b-779e4e2a6d95",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T17:49:01.143170",
+              "started_at": "2025-11-21T17:49:01.319412",
+              "completed_at": "2025-11-21T17:49:06.149192",
+              "result_data": {
+                "file": "results_fe125c47-2745-4939-807b-779e4e2a6d95.json"
+              },
+              "error_msg": null
+            },
+            {
+              "job_type": "SEGMENTATION",
+              "params": {
+                "slide_name": "JP2K-33003-2.svs"
+              },
+              "id": "3148de11-a7b6-44c1-adea-a097422c1094",
+              "status": "FAILED",
+              "progress": 18,
+              "created_at": "2025-11-21T17:49:01.143193",
+              "started_at": "2025-11-21T17:49:06.429169",
+              "completed_at": null,
+              "result_data": null,
+              "error_msg": "System restart detected."
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:49:01.143234",
+      "started_at": "2025-11-21T17:49:01.319396",
+      "completed_at": null,
+      "status": "FAILED"
+    },
+    {
+      "id": "00546ac1-5417-45a8-9af6-8fa50e7aecb5",
+      "user_id": "User_2",
+      "name": "Analysis_JP2K-33003-2",
+      "slide_name": "JP2K-33003-2.svs",
+      "branches": [
+        {
+          "id": "3d652b30-3e63-4027-9c45-63a9ac264a73",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "SEGMENTATION",
+              "params": {
+                "slide_name": "JP2K-33003-2.svs"
+              },
+              "id": "384aa985-e9db-4f7b-a019-13eacc8bb1cd",
+              "status": "CANCELLED",
+              "progress": 10,
+              "created_at": "2025-11-21T17:55:17.236473",
+              "started_at": "2025-11-21T17:55:17.584446",
+              "completed_at": null,
+              "result_data": null,
+              "error_msg": "Cancelled by user"
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:55:17.236509",
+      "started_at": "2025-11-21T17:55:17.584424",
+      "completed_at": "2025-11-21T17:59:45.612312",
+      "status": "COMPLETED"
+    },
+    {
+      "id": "488cdcf9-683a-4a36-820b-a48ab3e5f30c",
+      "user_id": "User_3",
+      "name": "Analysis_CMU-1",
+      "slide_name": "CMU-1.svs",
+      "branches": [
+        {
+          "id": "03d73277-a7ab-4522-be2b-2b1f0d625d41",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "TISSUE_MASK",
+              "params": {
+                "slide_name": "CMU-1.svs"
+              },
+              "id": "7f7d68a0-f1bb-4de2-9fe9-26e89d96da68",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T17:54:49.136480",
+              "started_at": "2025-11-21T13:04:20.805221",
+              "completed_at": "2025-11-21T13:04:21.211859",
+              "result_data": {
+                "file": "results_7f7d68a0-f1bb-4de2-9fe9-26e89d96da68.json"
+              },
+              "error_msg": null
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:54:49.136536",
+      "started_at": "2025-11-21T13:04:20.805195",
+      "completed_at": "2025-11-21T13:04:21.809708",
+      "status": "COMPLETED"
+    },
+    {
+      "id": "9b85ca67-e3a9-4c4a-b70c-562ee59e35c2",
+      "user_id": "User_3",
+      "name": "Analysis_CMU-1",
+      "slide_name": "CMU-1.svs",
+      "branches": [
+        {
+          "id": "a084c612-71e8-4366-8d65-00b6ff59769d",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "TISSUE_MASK",
+              "params": {
+                "slide_name": "CMU-1.svs"
+              },
+              "id": "05493ef6-8725-4311-93a7-aa851c18d275",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T17:55:05.203908",
+              "started_at": "2025-11-21T13:04:20.806270",
+              "completed_at": "2025-11-21T13:04:21.131264",
+              "result_data": {
+                "file": "results_05493ef6-8725-4311-93a7-aa851c18d275.json"
+              },
+              "error_msg": null
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T17:55:05.203947",
+      "started_at": "2025-11-21T13:04:20.806265",
+      "completed_at": "2025-11-21T13:04:21.809785",
+      "status": "COMPLETED"
+    },
+    {
+      "id": "80b001b9-749d-4dfa-a7b6-91d1edb74621",
+      "user_id": "User_0",
+      "name": "Analysis_JP2K-33003-1",
+      "slide_name": "JP2K-33003-1.svs",
+      "branches": [
+        {
+          "id": "ea7be8c6-c0a6-4f3d-a48f-696f2e374491",
+          "name": "Branch 1",
+          "jobs": [
+            {
+              "job_type": "TISSUE_MASK",
+              "params": {
+                "slide_name": "JP2K-33003-1.svs"
+              },
+              "id": "1d586eb7-2bee-418c-8f63-6870e2dc906f",
+              "status": "COMPLETED",
+              "progress": 100,
+              "created_at": "2025-11-21T13:04:34.075889",
+              "started_at": "2025-11-21T13:04:34.831443",
+              "completed_at": "2025-11-21T13:04:35.150764",
+              "result_data": {
+                "file": "results_1d586eb7-2bee-418c-8f63-6870e2dc906f.json"
+              },
+              "error_msg": null
+            },
+            {
+              "job_type": "SEGMENTATION",
+              "params": {
+                "slide_name": "JP2K-33003-1.svs"
+              },
+              "id": "ea6badbe-d9a3-4d63-9b67-f7e6a182cc25",
+              "status": "RUNNING",
+              "progress": 0,
+              "created_at": "2025-11-21T13:04:34.075926",
+              "started_at": "2025-11-21T13:04:35.837380",
+              "completed_at": null,
+              "result_data": null,
+              "error_msg": null
+            }
+          ],
+          "status": "PENDING"
+        }
+      ],
+      "created_at": "2025-11-21T13:04:34.075951",
+      "started_at": "2025-11-21T13:04:34.831406",
+      "completed_at": null,
+      "status": "RUNNING"
+    }
+  ],
+  "pending_workflows": [],
+  "active_user_ids": [
+    "User_0"
+  ]
+}

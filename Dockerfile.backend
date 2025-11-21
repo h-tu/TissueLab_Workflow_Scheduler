@@ -1,0 +1,50 @@
+#-------------------------------------------------------------------------------
+# File:        Dockerfile.backend
+# Description: Docker build instructions for the Python backend service, including system dependencies.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# File:        Dockerfile.backend
+# Description: Backend build instructions.
+#              FIX: Forces --platform=linux/amd64 to find 'slideio' wheels.
+#-------------------------------------------------------------------------------
+# CRITICAL: Force x86_64 architecture. 
+# 'slideio' (dependency of instanseg) has NO Linux ARM64 support.
+FROM --platform=linux/amd64 python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+# We keep the extensive list because emulation might still require some compilation
+# libgl1 is for OpenCV, libgomp1 is for Torch
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    ca-certificates \
+    libopenslide0 \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# Upgrade pip to ensure it handles manylinux wheels correctly
+RUN pip install --upgrade pip
+
+# Install python dependencies
+# This will now find the x86_64 wheels for slideio and rasterio
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Prometheus client
+RUN pip install prometheus-fastapi-instrumentator
+
+COPY . .
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
