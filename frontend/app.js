@@ -15,9 +15,15 @@ document.addEventListener("DOMContentLoaded", () => {
     startPolling();
     fetchSlideList();
     
-    // Randomize User ID on refresh for easier testing
-    document.getElementById('userIdInput').value = "User_" + Math.floor(Math.random() * 1000);
+    // Default user
+    document.getElementById('userIdInput').value = "User_0";
 });
+
+// HELPER: Quick User Switch
+window.setUserId = function(id) {
+    document.getElementById('userIdInput').value = "User_" + id;
+    fetchStatus(); 
+}
 
 // --- 2. OPENSEADRAGON VIEWER ---
 function initViewer() {
@@ -33,7 +39,6 @@ function initViewer() {
         zoomPerScroll: 2,
     });
 
-    // Initialize SVG Overlay
     overlay = viewer.svgOverlay();
 }
 
@@ -44,7 +49,6 @@ async function fetchSlideList() {
         
         if (data.slides && data.slides.length > 0) {
             renderSlideList(data.slides);
-            loadSlide(data.slides[0].name); 
         } else {
             document.getElementById('slideList').innerHTML = 
                 '<div class="text-xs text-red-400 p-2">No .svs files found in data/inputs</div>';
@@ -87,14 +91,14 @@ function renderSlideList(slides) {
 async function loadSlide(filename) {
     const loader = document.getElementById('viewerLoader');
     const label = document.getElementById('currentSlideName');
+    const prompt = document.getElementById('selectSlidePrompt');
     
-    // --- FIX: TRANSPARENT LOADER ---
-    // We remove the solid background (bg-slate-900) and use a semi-transparent one.
-    // This lets the user see the OpenSeadragon viewer "behind" the spinner immediately.
+    if (prompt) prompt.classList.add('hidden');
+
     loader.classList.remove('hidden');
-    loader.classList.remove('bg-slate-900'); // Remove solid color
-    loader.classList.add('bg-slate-900/50'); // Add transparent backdrop
-    loader.classList.add('pointer-events-none'); // Let clicks pass through to the viewer
+    loader.classList.remove('bg-slate-900'); 
+    loader.classList.add('bg-slate-900/50'); 
+    loader.classList.add('pointer-events-none'); 
     
     label.innerText = "Loading: " + filename;
     currentSlideFilename = filename;
@@ -118,15 +122,11 @@ async function loadSlide(filename) {
             }
         };
 
-        // Remove loader when the FIRST tile arrives.
-        // Because the loader is transparent, the user sees tiles loading before this event too.
         viewer.addOnceHandler('tile-loaded', function() {
             loader.classList.add('hidden');
-            // Reset classes for next time
             loader.classList.remove('bg-slate-900/50'); 
             loader.classList.remove('pointer-events-none');
             loader.classList.add('bg-slate-900');
-            
             label.innerText = filename;
         });
 
@@ -153,14 +153,12 @@ function startPolling() {
 async function fetchStatus() {
     const userId = document.getElementById('userIdInput').value;
     try {
-        // Stats
         const statusRes = await fetch(`${API_URL}/status`);
         const status = await statusRes.json();
         
         document.getElementById('activeUsersCount').innerText = `${status.active_users_count}/3`;
         document.getElementById('gpuWorkersCount').innerText = `${status.running_jobs}/4`;
 
-        // Workflows
         const wfRes = await fetch(`${API_URL}/workflows/`, {
             headers: { 'X-User-ID': userId }
         });
@@ -179,14 +177,13 @@ function checkAndLoadResults(workflows) {
                 if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
                     completedJobIds.add(job.id);
                     
-                    // Fetch results
                     try {
                         const res = await fetch(`${API_URL}/results/${job.id}`, { headers: { 'X-User-ID': 'sys' } });
                         if (res.ok) {
                             const resultData = await res.json();
                             if (resultData.slide === currentSlideFilename) {
                                 drawPolygons(resultData.polygons);
-                                showNotification(`${resultData.cell_count} Cells Detected`);
+                                showNotification(`${resultData.cell_count} Objects Detected`);
                             }
                         }
                     } catch (err) {
@@ -291,26 +288,121 @@ function renderWorkflows(workflows) {
     container.innerHTML = html;
 }
 
-async function submitMockWorkflow() {
+// --- 4. WORKFLOW BUILDER LOGIC ---
+
+function openBuilder() {
+    document.getElementById('builderModal').classList.remove('hidden');
+    const container = document.getElementById('builderBranches');
+    container.innerHTML = ''; // Clear previous
+    addBuilderBranch(); // Start with one branch
+    
+    // Generate random default name
+    document.getElementById('buildWfName').value = "Job_" + Math.floor(Math.random() * 1000);
+}
+
+function closeBuilder() {
+    document.getElementById('builderModal').classList.add('hidden');
+}
+
+function addBuilderBranch() {
+    const container = document.getElementById('builderBranches');
+    const branchId = 'branch_' + Date.now() + '_' + Math.random();
+    
+    const div = document.createElement('div');
+    div.className = "bg-slate-900 p-3 rounded border border-slate-700 builder-branch";
+    div.dataset.id = branchId;
+    
+    div.innerHTML = `
+        <div class="flex justify-between items-center mb-2">
+            <div class="flex gap-2 items-center w-full">
+                <span class="text-xs font-bold text-slate-400">BRANCH</span>
+                <input type="text" value="Region 1" class="branch-name-input bg-slate-800 border border-slate-600 rounded text-xs px-2 py-1 text-white w-1/2">
+            </div>
+            <button onclick="this.closest('.builder-branch').remove()" class="text-red-400 hover:text-red-300 text-xs"><i class="fa-solid fa-trash"></i></button>
+        </div>
+        <div class="space-y-2 pl-2 border-l-2 border-slate-700 jobs-container">
+            </div>
+        <button onclick="addBuilderJob('${branchId}')" class="mt-2 text-[10px] text-blue-400 hover:text-blue-300 font-bold uppercase">
+            <i class="fa-solid fa-plus"></i> Add Job
+        </button>
+    `;
+    
+    container.appendChild(div);
+    // Add default job
+    addBuilderJob(branchId);
+}
+
+function addBuilderJob(branchId) {
+    // Find the specific branch container by data-id
+    const branchDiv = document.querySelector(`.builder-branch[data-id="${branchId}"] .jobs-container`);
+    
+    const div = document.createElement('div');
+    div.className = "flex gap-2 items-center builder-job";
+    
+    div.innerHTML = `
+        <div class="h-6 w-6 rounded bg-slate-700 flex items-center justify-center text-[10px] text-slate-400 font-mono">J</div>
+        <select class="job-type-select bg-slate-800 border border-slate-600 text-white text-xs rounded px-2 py-1 flex-1">
+            <option value="SEGMENTATION">Nuclei Segmentation (InstanSeg)</option>
+            <option value="TISSUE_MASK">Tissue Mask Generation</option>
+        </select>
+        <button onclick="this.closest('.builder-job').remove()" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-minus"></i></button>
+    `;
+    
+    branchDiv.appendChild(div);
+}
+
+async function submitBuilder() {
     const userId = document.getElementById('userIdInput').value;
+    const wfName = document.getElementById('buildWfName').value;
+    
+    const branches = [];
+    
+    // Traverse DOM to build payload
+    document.querySelectorAll('.builder-branch').forEach(bDiv => {
+        const branchName = bDiv.querySelector('.branch-name-input').value;
+        const jobs = [];
+        
+        bDiv.querySelectorAll('.builder-job').forEach(jDiv => {
+            const type = jDiv.querySelector('.job-type-select').value;
+            jobs.push({
+                job_type: type,
+                params: {}
+            });
+        });
+        
+        if (jobs.length > 0) {
+            branches.push({
+                branch_name: branchName,
+                jobs: jobs
+            });
+        }
+    });
+    
+    if (branches.length === 0) {
+        alert("Please add at least one branch with one job.");
+        return;
+    }
+
     const payload = {
-        workflow_name: "Analysis_" + Math.floor(Math.random() * 1000),
-        branches: [
-            {
-                branch_name: "Region_1",
-                jobs: [ { job_type: "SEGMENTATION", params: {} } ]
-            }
-        ]
+        workflow_name: wfName,
+        branches: branches
     };
+
     try {
         const res = await fetch(`${API_URL}/workflows/`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-User-ID": userId },
             body: JSON.stringify(payload)
         });
+        
         if (res.status === 403 || res.status === 429) {
             alert("Queue Full! You are now waiting for a slot.");
         }
+        
+        closeBuilder();
         fetchStatus();
-    } catch (e) { alert("Error: " + e); }
+        
+    } catch (e) {
+        alert("Error submitting workflow: " + e);
+    }
 }

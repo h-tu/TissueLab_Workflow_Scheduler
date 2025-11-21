@@ -121,8 +121,9 @@ async def get_slide_metadata(filename: str):
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to read slide")
 
+# --- FIX: Removed 'async' to unblock the main event loop during heavy I/O ---
 @app.get("/tiles/{filename}/{level}/{x}_{y}.jpeg")
-async def get_tile(filename: str, level: int, x: int, y: int):
+def get_tile(filename: str, level: int, x: int, y: int):
     try:
         tile_bytes = tiler.get_tile(filename, level, x, y)
         return Response(content=tile_bytes, media_type="image/jpeg")

@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+numpy
+torch
+shapely
+opencv-python-headless
+openslide-python
+pydantic
+instanseg
+requests

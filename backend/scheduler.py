@@ -100,7 +100,13 @@ class Scheduler:
             
             slide_path = os.path.join(data_dir, files[0])
 
-            result_file = await asyncio.to_thread(ml_worker.process_slide, slide_path, str(job.id))
+            # --- FIX: Pass job_type to the worker ---
+            result_file = await asyncio.to_thread(
+                ml_worker.process_slide, 
+                slide_path, 
+                str(job.id),
+                job.job_type
+            )
             
             job.status = JobStatus.COMPLETED
             job.completed_at = datetime.now()
