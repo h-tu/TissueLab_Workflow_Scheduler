@@ -32,7 +32,7 @@ To handle gigapixel-scale WSIs efficiently, the `MLWorker` implements a **Region
 * **Python 3.10+** (For local execution)
 * **Data:** Place your `.svs` files in the `./data/inputs` directory.
 
-### Option 1: Docker Deployment (Recommended)
+### Option 1: Docker Deployment 
 This spins up the Backend, Frontend (Nginx), Prometheus, and Grafana.
 
 1.  **Clone the repository:**
