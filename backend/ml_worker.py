@@ -6,7 +6,7 @@ import torch
 from shapely.geometry import Polygon, box
 import cv2
 import openslide
-import threading # <--- Needed for types
+import threading 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,14 +42,41 @@ class MLWorker:
             except Exception as e:
                 logger.error(f"❌ Failed to load InstanSeg: {e}")
 
-    def _is_background(self, tile_np, threshold=220):
+    # --- IMPROVED BACKGROUND CHECK ---
+    def _is_background(self, tile_np, threshold=235): # Increased from 220 to 235
+        """
+        Robust background detection:
+        1. Check if mean intensity is high (white).
+        2. Check if standard deviation is low (flat/glass).
+        Tissue usually has texture (high std dev) even if it's pale.
+        """
         gray = cv2.cvtColor(tile_np, cv2.COLOR_RGB2GRAY)
         mean_val = np.mean(gray)
-        if mean_val > threshold:
+        std_dev = np.std(gray)
+        
+        # Only skip if it is VERY white AND has very little texture (glass)
+        if mean_val > threshold and std_dev < 15:
             return True
         return False
 
-    # --- UPDATED: Accepting cancel_event and progress_callback ---
+    def _save_json(self, job_id, filename, polygons):
+        output_filename = f"results_{job_id}.json"
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_path = os.path.join(base_dir, output_filename)
+        
+        temp_path = output_path + ".tmp"
+        try:
+            with open(temp_path, "w") as f:
+                json.dump({
+                    "job_id": str(job_id),
+                    "slide": filename,
+                    "cell_count": len(polygons),
+                    "polygons": polygons 
+                }, f)
+            os.replace(temp_path, output_path)
+        except Exception as e:
+            logger.error(f"Error saving intermediate result: {e}")
+
     def process_slide(self, slide_path: str, job_id: str, job_type: str = "SEGMENTATION", 
                       cancel_event: threading.Event = None, 
                       progress_callback = None) -> str:
@@ -73,9 +100,7 @@ class MLWorker:
                 pixel_size = 0.5
 
             all_polygons = []
-            cell_limit = 5000 
             
-            # --- PROGRESS CALCULATION SETUP ---
             rows = range(0, h, STRIDE)
             cols = range(0, w, STRIDE)
             total_tiles = len(rows) * len(cols)
@@ -85,28 +110,27 @@ class MLWorker:
             
             for y in rows:
                 for x in cols:
-                    # --- 1. CHECK CANCELLATION ---
                     if cancel_event and cancel_event.is_set():
-                        logger.warning(f"🛑 [Job {job_id}] Cancellation detected. Aborting worker.")
+                        logger.warning(f"🛑 [Job {job_id}] Cancellation detected.")
                         raise InterruptedError("Job Cancelled by User")
 
-                    # --- 2. UPDATE PROGRESS ---
                     processed_tiles += 1
-                    if progress_callback and processed_tiles % 5 == 0: # Update every 5 tiles to reduce overhead
+                    if progress_callback and processed_tiles % 5 == 0: 
                         pct = int((processed_tiles / total_tiles) * 100)
                         progress_callback(pct)
-
-                    if len(all_polygons) >= cell_limit: break
+                        
+                    if processed_tiles % 50 == 0: # Save less frequently to save IO
+                        self._save_json(job_id, filename, all_polygons)
 
                     read_x = x - OVERLAP
                     read_y = y - OVERLAP
-                    
                     valid_read_x = max(0, read_x)
                     valid_read_y = max(0, read_y)
                     
                     tile = slide.read_region((valid_read_x, valid_read_y), 0, (TILE_SIZE, TILE_SIZE)).convert("RGB")
                     tile_np = np.array(tile)
 
+                    # --- CHECK BACKGROUND ---
                     if self._is_background(tile_np):
                         continue
                     
@@ -140,20 +164,11 @@ class MLWorker:
                         if valid_box.contains(poly_shape.centroid):
                             all_polygons.append(global_poly)
 
-            # Finalize progress
+            # Final Save
             if progress_callback: progress_callback(100)
-
+            self._save_json(job_id, filename, all_polygons)
+            
             output_filename = f"results_{job_id}.json"
-            output_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), output_filename)
-            
-            with open(output_path, "w") as f:
-                json.dump({
-                    "job_id": str(job_id),
-                    "slide": filename,
-                    "cell_count": len(all_polygons),
-                    "polygons": all_polygons 
-                }, f)
-            
             return output_filename
             
         except Exception as e:
@@ -189,7 +204,9 @@ class MLWorker:
             tissue_polygons.append(poly_points)
         
         output_filename = f"results_{job_id}.json"
-        output_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), output_filename)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_path = os.path.join(base_dir, output_filename)
+        
         with open(output_path, "w") as f:
             json.dump({
                 "job_id": str(job_id),

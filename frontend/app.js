@@ -200,21 +200,29 @@ async function fetchStatus() {
     } catch (e) { /* Silent fail */ }
 }
 
-// Only loads results if they just finished (Notification trigger)
+
 function checkNewResults(workflows) {
     workflows.forEach(wf => {
         wf.branches.forEach(branch => {
             branch.jobs.forEach(async (job) => {
+                // 1. Handle Completed (Notification)
                 if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
                     completedJobIds.add(job.id);
-                    loadJobResult(job.id, true); // true = show notification
+                    loadJobResult(job.id, true); // Show notify
+                }
+                
+                // 2. Handle Running (Live Streaming)
+                // Only poll if it's running AND matches the current slide view
+                if (job.status === 'RUNNING' && job.slide_name === currentSlideFilename) {
+                    // We don't notify, just update the visual
+                    loadJobResult(job.id, false); 
                 }
             });
         });
     });
 }
 
-// Loads results when you switch slides (No notification)
+
 function checkForExistingResults() {
     if(!currentWorkflowsCache) return;
     
@@ -223,7 +231,8 @@ function checkForExistingResults() {
         
         wf.branches.forEach(branch => {
             branch.jobs.forEach(job => {
-                if(job.status === 'COMPLETED') {
+                // Load if Completed OR Running (Partial results)
+                if(job.status === 'COMPLETED' || job.status === 'RUNNING') {
                     loadJobResult(job.id, false);
                 }
             });
@@ -311,6 +320,27 @@ function showNotification(msg) {
     }, 4000);
 }
 
+// --- WORKFLOW RENDERING LOGIC ---
+
+function calculateWorkflowStats(wf) {
+    let totalJobs = 0;
+    let totalWeightedProgress = 0;
+
+    wf.branches.forEach(b => {
+        b.jobs.forEach(j => {
+            totalJobs++;
+            if (j.status === 'COMPLETED') {
+                totalWeightedProgress += 100;
+            } else if (j.status === 'RUNNING') {
+                totalWeightedProgress += (j.progress || 0);
+            }
+        });
+    });
+
+    const totalPercent = totalJobs > 0 ? Math.round(totalWeightedProgress / totalJobs) : 0;
+    return { totalJobs, totalPercent };
+}
+
 function renderWorkflows(workflows) {
     const container = document.getElementById('workflowList');
     if (!workflows || workflows.length === 0) {
@@ -326,13 +356,33 @@ function renderWorkflows(workflows) {
         if (wf.status === "PENDING") statusColor = "bg-amber-500";
         if (wf.status === "CANCELLED") statusColor = "bg-slate-500";
 
-        const progress = wf.status === "COMPLETED" ? 100 : (wf.status === "RUNNING" ? 50 : 0);
+        // Calculate Overall Progress
+        const { totalPercent } = calculateWorkflowStats(wf);
+
         const slideInfo = wf.slide_name ? `<div class="text-[10px] text-slate-400 mb-1"><i class="fa-regular fa-image"></i> ${wf.slide_name}</div>` : '';
 
         const canDelete = (wf.status === "COMPLETED" || wf.status === "FAILED" || wf.status === "CANCELLED");
         const deleteBtn = canDelete ? 
             `<button onclick="deleteWorkflow('${wf.id}', event)" class="text-slate-500 hover:text-red-400 transition-colors p-1"><i class="fa-solid fa-trash-can"></i></button>` 
             : '';
+
+        // Render Branch Bars
+        const branchBars = wf.branches.map(b => {
+            let bJobs = 0;
+            let bProg = 0;
+            b.jobs.forEach(j => {
+                bJobs++;
+                if(j.status === 'COMPLETED') bProg += 100;
+                else if(j.status === 'RUNNING') bProg += (j.progress || 0);
+            });
+            const bPercent = bJobs > 0 ? Math.round(bProg / bJobs) : 0;
+            
+             return `
+                <div class="h-1 flex-1 rounded-full bg-slate-600 overflow-hidden" title="${b.name}: ${bPercent}%">
+                    <div class="h-full bg-blue-400" style="width: ${bPercent}%"></div>
+                </div>
+             `;
+        }).join('');
 
         return `
             <div onclick="openWorkflowDetails('${wf.id}')" 
@@ -343,19 +393,18 @@ function renderWorkflows(workflows) {
                         ${slideInfo}
                     </div>
                     <div class="flex flex-col items-end gap-1">
-                        <span class="text-[10px] font-mono px-2 py-0.5 rounded-full text-white ${statusColor}">
-                            ${wf.status}
-                        </span>
+                        <div class="flex items-center gap-2">
+                             <span class="text-xs font-mono font-bold text-blue-300">${totalPercent}%</span>
+                             <span class="text-[10px] font-mono px-2 py-0.5 rounded-full text-white ${statusColor}">
+                                ${wf.status}
+                             </span>
+                        </div>
                         ${deleteBtn}
                     </div>
                 </div>
                 
                 <div class="flex gap-1 mt-2">
-                     ${wf.branches.map(b => `
-                        <div class="h-1 flex-1 rounded-full bg-slate-600 overflow-hidden">
-                            <div class="h-full bg-blue-400" style="width: ${progress}%"></div>
-                        </div>
-                     `).join('')}
+                     ${branchBars}
                 </div>
             </div>
         `;
@@ -400,7 +449,15 @@ function closeWorkflowDetails() {
 }
 
 function renderDetailsContent(wf) {
-    document.getElementById('detailWfName').innerText = wf.name;
+    // Calculate overall for header
+    const { totalPercent } = calculateWorkflowStats(wf);
+
+    document.getElementById('detailWfName').innerHTML = `
+        <div class="flex justify-between items-center w-full">
+            <span>${wf.name}</span>
+            <span class="text-sm font-mono text-blue-400 bg-blue-900/30 px-2 py-1 rounded">${totalPercent}%</span>
+        </div>
+    `;
     document.getElementById('detailWfId').innerText = "ID: " + wf.id;
     
     const container = document.getElementById('detailContent');
@@ -429,6 +486,7 @@ function renderDetailsContent(wf) {
             } else if(job.status === 'COMPLETED') {
                 icon = '<i class="fa-solid fa-circle-check text-emerald-400"></i>';
                 textColor = 'text-emerald-300';
+                progressText = `<span class="text-[10px] font-mono ml-2 text-emerald-500">100%</span>`;
             } else if(job.status === 'FAILED') {
                 icon = '<i class="fa-solid fa-circle-xmark text-red-400"></i>';
                 textColor = 'text-red-300';
