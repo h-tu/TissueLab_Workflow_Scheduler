@@ -1,0 +1,14 @@
+#-------------------------------------------------------------------------------
+# File:        prometheus.yml
+# Description: Prometheus configuration file defining scraping targets (the FastAPI backend).
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'tissuelab-backend'
+    static_configs:
+      - targets: ['backend:8000']

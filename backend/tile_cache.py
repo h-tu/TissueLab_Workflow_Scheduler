@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        tile_cache.py
+# Description: In-memory LRU cache service for storing generated WSI tiles.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 import time
 import threading
 import logging

@@ -1,3 +1,9 @@
+#-------------------------------------------------------------------------------
+# File:        run.sh
+# Description: Local development script to set up the Conda environment and run the backend/frontend servers.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
 #!/bin/bash
 
 cleanup() {

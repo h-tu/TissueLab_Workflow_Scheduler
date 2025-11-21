@@ -1,9 +1,17 @@
+#-------------------------------------------------------------------------------
+# File:        requirements.txt
+# Description: Python dependencies required for the backend service (FastAPI, InstanSeg, OpenSlide).
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 fastapi
 uvicorn
 pydantic
 numpy
 torch
 shapely
+prometheus_fastapi_instrumentator
 opencv-python-headless
 openslide-python
 Pillow

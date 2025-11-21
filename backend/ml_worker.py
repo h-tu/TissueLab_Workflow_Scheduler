@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        ml_worker.py
+# Description: Executes all long-running image processing jobs (Segmentation, Tissue Mask, Report, Visualization).
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 import os
 import json
 import logging

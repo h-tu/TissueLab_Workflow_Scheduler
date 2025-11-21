@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        scheduler.py
+# Description: Core workflow scheduler, managing concurrency limits (users/jobs), state, and job dispatch.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 import asyncio
 import logging
 import os

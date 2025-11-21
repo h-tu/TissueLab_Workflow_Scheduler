@@ -1,0 +1,26 @@
+#-------------------------------------------------------------------------------
+# File:        Dockerfile.backend
+# Description: Docker build instructions for the Python backend service, including system dependencies.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies for OpenSlide and OpenCV
+RUN apt-get update && apt-get install -y \
+    libopenslide0 \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Prometheus client
+RUN pip install prometheus-fastapi-instrumentator
+
+COPY . .
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        models.py
+# Description: Pydantic models for Workflow, Branch, and Job data structures, statuses, and types.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field

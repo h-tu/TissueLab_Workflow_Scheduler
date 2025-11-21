@@ -1,3 +1,10 @@
+#-------------------------------------------------------------------------------
+# File:        main.py
+# Description: FastAPI application entry point, API routing, and system status endpoints.
+# Author:      Hongyu Tu
+# Created:     Nov 20, 2025
+#-------------------------------------------------------------------------------
+
 import asyncio
 import os
 import json
@@ -7,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .models import WorkflowCreate, Workflow, Branch, Job, JobStatus, JobType
 from .scheduler import Scheduler
@@ -24,6 +32,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- NEW: PROMETHEUS INSTRUMENTATION ---
+Instrumentator().instrument(app).expose(app)
 
 scheduler = Scheduler()
 tiler = WSITiler()
@@ -103,7 +114,6 @@ async def cancel_job(job_id: str, user_id: str = Depends(get_user_id)):
 
 @app.get("/status")
 async def get_system_status():
-    # Include new metrics
     metrics = scheduler.get_metrics()
     return {
         "active_users_count": len(scheduler.active_user_ids),

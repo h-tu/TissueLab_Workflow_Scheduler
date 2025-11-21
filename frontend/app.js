@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Client-side logic for the TissueLab frontend. Handles OpenSeadragon viewer, 
+ * API polling, workflow builder UI, and segmentation visualization.
+ * @author     Hongyu Tu
+ * @date       Nov 20, 2025
+ */
+
 // CONFIGURATION
 const API_URL = "http://localhost:8000";
 const TILE_SERVER_URL = "http://localhost:8000/tiles";
@@ -11,15 +18,14 @@ let completedJobIds = new Set();
 let isOverlayVisible = true;
 let currentWorkflowsCache = []; 
 let currentDetailWfId = null;
-let allCellsCache = []; // Stores {polygon:[], area:...}
+let allCellsCache = []; 
 
-// --- 1. INITIALIZATION ---
+
 document.addEventListener("DOMContentLoaded", () => {
     initViewer();
     startPolling();
     fetchSlideList();
     
-    // Default user
     document.getElementById('userIdInput').value = "User_0";
 });
 
