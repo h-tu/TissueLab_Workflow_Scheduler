@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 from typing import Annotated, List, Dict, Any
+from uuid import UUID
 from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -49,13 +50,22 @@ async def submit_workflow(
     background_tasks: BackgroundTasks,
     user_id: str = Depends(get_user_id)
 ):
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    slide_path = os.path.join(base_dir, "data/inputs", workflow_in.slide_name)
+    
+    if not os.path.exists(slide_path):
+        raise HTTPException(status_code=404, detail=f"Slide '{workflow_in.slide_name}' not found on server.")
+
     internal_branches = []
     for b_in in workflow_in.branches:
         internal_jobs = []
         for j_in in b_in.jobs:
+            job_params = j_in.params.copy()
+            job_params["slide_name"] = workflow_in.slide_name
+
             job = Job(
                 job_type=j_in.job_type,
-                params=j_in.params,
+                params=job_params,
                 status=JobStatus.PENDING
             )
             internal_jobs.append(job)
@@ -70,6 +80,7 @@ async def submit_workflow(
     new_workflow = Workflow(
         user_id=user_id,
         name=workflow_in.workflow_name,
+        slide_name=workflow_in.slide_name,
         branches=internal_branches,
         status=JobStatus.PENDING
     )
@@ -94,6 +105,18 @@ async def list_workflows(user_id: str = Depends(get_user_id)):
             user_workflows.append(w)
             
     return user_workflows
+
+# --- ADDED: Delete Endpoint ---
+@app.delete("/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str, user_id: str = Depends(get_user_id)):
+    try:
+        w_uuid = UUID(workflow_id)
+        success = await scheduler.delete_workflow(w_uuid)
+        if not success:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        return {"status": "deleted", "id": str(w_uuid)}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
 
 @app.get("/status")
 async def get_system_status():
@@ -121,7 +144,6 @@ async def get_slide_metadata(filename: str):
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to read slide")
 
-# --- FIX: Removed 'async' to unblock the main event loop during heavy I/O ---
 @app.get("/tiles/{filename}/{level}/{x}_{y}.jpeg")
 def get_tile(filename: str, level: int, x: int, y: int):
     try:

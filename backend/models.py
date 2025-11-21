@@ -25,6 +25,7 @@ class JobCreate(JobBase):
 class Job(JobBase):
     id: UUID = Field(default_factory=uuid4)
     status: JobStatus = JobStatus.PENDING
+    progress: int = 0  # <--- ADDED: Track percentage (0-100)
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -43,12 +44,14 @@ class Branch(BaseModel):
 
 class WorkflowCreate(BaseModel):
     workflow_name: str
+    slide_name: str  
     branches: List[BranchCreate]
 
 class Workflow(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     user_id: str
     name: str
+    slide_name: Optional[str] = None 
     branches: List[Branch] = []
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
@@ -56,10 +59,16 @@ class Workflow(BaseModel):
 
     @property
     def progress(self) -> float:
+        # Enhanced to include internal job progress
         total_jobs = sum(len(b.jobs) for b in self.branches)
         if total_jobs == 0: return 0.0
-        completed = sum(
-            1 for b in self.branches for j in b.jobs 
-            if j.status == JobStatus.COMPLETED
-        )
-        return round((completed / total_jobs) * 100, 2)
+        
+        total_progress = 0
+        for b in self.branches:
+            for j in b.jobs:
+                if j.status == JobStatus.COMPLETED:
+                    total_progress += 100
+                elif j.status == JobStatus.RUNNING:
+                    total_progress += j.progress
+        
+        return round((total_progress / (total_jobs * 100)) * 100, 2)

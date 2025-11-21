@@ -101,7 +101,7 @@ Please include the following in your submission:
 - `README.md` with:  
   - Setup instructions (`docker-compose up` or local commands)  
   - A short section describing how you would **scale** to 10× more jobs/users  
-  - A short section on **testing** and **monitoring** in production  
+  - A short section on **testing** and **monitoring** in production
 - API documentation (Swagger / OpenAPI)  
 - Demo screenshots or short screen recording (optional)  
 - Clean, modular, and readable code

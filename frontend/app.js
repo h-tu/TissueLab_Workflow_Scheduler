@@ -6,8 +6,13 @@ let viewer = null;
 let overlay = null;
 let pollInterval = null;
 let currentSlideFilename = null;
+let currentSlideWidth = 0; // Track width for coordinate conversion
 let completedJobIds = new Set();
 let isOverlayVisible = true;
+let currentWorkflowsCache = []; 
+
+// --- NEW: Track currently open details modal ---
+let currentDetailWfId = null;
 
 // --- 1. INITIALIZATION ---
 document.addEventListener("DOMContentLoaded", () => {
@@ -17,9 +22,18 @@ document.addEventListener("DOMContentLoaded", () => {
     
     // Default user
     document.getElementById('userIdInput').value = "User_0";
+
+    // Override close button behavior to clear state
+    // We try to find the button in the modal to attach a cleaner listener
+    const modal = document.getElementById('detailsModal');
+    if (modal) {
+        const closeBtn = modal.querySelector('button'); // The 'x' button
+        if(closeBtn) {
+            closeBtn.onclick = () => closeWorkflowDetails();
+        }
+    }
 });
 
-// HELPER: Quick User Switch
 window.setUserId = function(id) {
     document.getElementById('userIdInput').value = "User_" + id;
     fetchStatus(); 
@@ -34,7 +48,7 @@ function initViewer() {
         blendTime: 0.1,
         constrainDuringPan: true,
         maxZoomPixelRatio: 2,
-        minZoomLevel: 0, // Full zoom out
+        minZoomLevel: 0, 
         visibilityRatio: 1,
         zoomPerScroll: 2,
     });
@@ -101,7 +115,7 @@ async function loadSlide(filename) {
     loader.classList.add('pointer-events-none'); 
     
     label.innerText = "Loading: " + filename;
-    currentSlideFilename = filename;
+    currentSlideFilename = filename; 
     
     if(overlay) d3_clear_overlay(); 
 
@@ -110,6 +124,7 @@ async function loadSlide(filename) {
         if (!response.ok) throw new Error("Slide not found");
         
         const info = await response.json();
+        currentSlideWidth = info.width; // Capture width for normalization
 
         const tileSource = {
             height: info.height,
@@ -136,6 +151,9 @@ async function loadSlide(filename) {
         });
 
         viewer.open(tileSource);
+        
+        // Check if we have results already waiting for this slide
+        checkForExistingResults();
 
     } catch (error) {
         console.error(error);
@@ -164,53 +182,94 @@ async function fetchStatus() {
         });
         const workflows = await wfRes.json();
         
+        currentWorkflowsCache = workflows; 
         renderWorkflows(workflows);
-        checkAndLoadResults(workflows);
+        checkNewResults(workflows); 
+
+        // --- FIX: Refresh Details Modal if Open ---
+        if (currentDetailWfId) {
+            const activeWf = workflows.find(w => w.id === currentDetailWfId);
+            if (activeWf) {
+                renderDetailsContent(activeWf);
+            } else {
+                // Workflow was deleted or disappeared
+                closeWorkflowDetails(); 
+            }
+        }
 
     } catch (e) { /* Silent fail */ }
 }
 
-function checkAndLoadResults(workflows) {
+// Only loads results if they just finished (Notification trigger)
+function checkNewResults(workflows) {
     workflows.forEach(wf => {
         wf.branches.forEach(branch => {
             branch.jobs.forEach(async (job) => {
                 if (job.status === 'COMPLETED' && !completedJobIds.has(job.id)) {
                     completedJobIds.add(job.id);
-                    
-                    try {
-                        const res = await fetch(`${API_URL}/results/${job.id}`, { headers: { 'X-User-ID': 'sys' } });
-                        if (res.ok) {
-                            const resultData = await res.json();
-                            if (resultData.slide === currentSlideFilename) {
-                                drawPolygons(resultData.polygons);
-                                showNotification(`${resultData.cell_count} Objects Detected`);
-                            }
-                        }
-                    } catch (err) {
-                        console.error("Failed to load results", err);
-                    }
+                    loadJobResult(job.id, true); // true = show notification
                 }
             });
         });
     });
 }
 
+// Loads results when you switch slides (No notification)
+function checkForExistingResults() {
+    if(!currentWorkflowsCache) return;
+    
+    currentWorkflowsCache.forEach(wf => {
+        if(wf.slide_name !== currentSlideFilename) return; // Only this slide
+        
+        wf.branches.forEach(branch => {
+            branch.jobs.forEach(job => {
+                if(job.status === 'COMPLETED') {
+                    loadJobResult(job.id, false);
+                }
+            });
+        });
+    });
+}
+
+async function loadJobResult(jobId, showNotify) {
+    try {
+        const res = await fetch(`${API_URL}/results/${jobId}`, { headers: { 'X-User-ID': 'sys' } });
+        if (res.ok) {
+            const resultData = await res.json();
+            // Double check this result belongs to current slide before drawing
+            if (resultData.slide === currentSlideFilename) {
+                drawPolygons(resultData.polygons);
+                if(showNotify) showNotification(`${resultData.cell_count} Objects Detected`);
+            }
+        }
+    } catch (err) {
+        console.error("Failed to load results", err);
+    }
+}
+
 function drawPolygons(polygons) {
-    if (!overlay) return;
+    if (!overlay || !currentSlideWidth) return;
     
     const svgNode = overlay.node();
     const fragment = document.createDocumentFragment();
     
     polygons.forEach(poly => {
         const path = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-        const pointsStr = poly.map(p => `${p[0]},${p[1]}`).join(" ");
+        
+        // Normalize Coordinates (Pixels -> 0..1 range)
+        const pointsStr = poly.map(p => {
+            const nx = p[0] / currentSlideWidth;
+            const ny = p[1] / currentSlideWidth; 
+            return `${nx},${ny}`;
+        }).join(" ");
+
         path.setAttribute("points", pointsStr);
         path.setAttribute("class", "cell-polygon");
         fragment.appendChild(path);
     });
     
     svgNode.appendChild(fragment);
-    overlay.resize();
+    overlay.resize(); 
     
     document.getElementById('btnToggleOverlay').classList.remove('text-slate-400');
     document.getElementById('btnToggleOverlay').classList.add('text-blue-400');
@@ -254,8 +313,8 @@ function showNotification(msg) {
 
 function renderWorkflows(workflows) {
     const container = document.getElementById('workflowList');
-    if (workflows.length === 0) {
-        container.innerHTML = `<div class="text-center text-slate-500 text-sm mt-10">No active workflows</div>`;
+    if (!workflows || workflows.length === 0) {
+        container.innerHTML = `<div class="text-center text-slate-500 text-sm mt-10">No workflows found for this user.</div>`;
         return;
     }
 
@@ -263,19 +322,35 @@ function renderWorkflows(workflows) {
         let statusColor = "bg-slate-600";
         if (wf.status === "RUNNING") statusColor = "bg-blue-500 animate-pulse";
         if (wf.status === "COMPLETED") statusColor = "bg-emerald-500";
+        if (wf.status === "FAILED") statusColor = "bg-red-500";
         if (wf.status === "PENDING") statusColor = "bg-amber-500";
+        if (wf.status === "CANCELLED") statusColor = "bg-slate-500";
 
         const progress = wf.status === "COMPLETED" ? 100 : (wf.status === "RUNNING" ? 50 : 0);
+        const slideInfo = wf.slide_name ? `<div class="text-[10px] text-slate-400 mb-1"><i class="fa-regular fa-image"></i> ${wf.slide_name}</div>` : '';
+
+        const canDelete = (wf.status === "COMPLETED" || wf.status === "FAILED" || wf.status === "CANCELLED");
+        const deleteBtn = canDelete ? 
+            `<button onclick="deleteWorkflow('${wf.id}', event)" class="text-slate-500 hover:text-red-400 transition-colors p-1"><i class="fa-solid fa-trash-can"></i></button>` 
+            : '';
 
         return `
-            <div class="bg-slate-700 rounded-lg p-3 border border-slate-600 shadow-sm hover:border-slate-500 transition-colors">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="font-bold text-sm text-slate-200">${wf.name}</span>
-                    <span class="text-[10px] font-mono px-2 py-1 rounded-full text-white ${statusColor}">
-                        ${wf.status}
-                    </span>
+            <div onclick="openWorkflowDetails('${wf.id}')" 
+                 class="bg-slate-700 rounded-lg p-3 border border-slate-600 shadow-sm hover:border-blue-500/50 transition-all cursor-pointer relative group">
+                <div class="flex justify-between items-start mb-1">
+                    <div>
+                        <div class="font-bold text-sm text-slate-200">${wf.name}</div>
+                        ${slideInfo}
+                    </div>
+                    <div class="flex flex-col items-end gap-1">
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded-full text-white ${statusColor}">
+                            ${wf.status}
+                        </span>
+                        ${deleteBtn}
+                    </div>
                 </div>
-                <div class="flex gap-1 mb-2">
+                
+                <div class="flex gap-1 mt-2">
                      ${wf.branches.map(b => `
                         <div class="h-1 flex-1 rounded-full bg-slate-600 overflow-hidden">
                             <div class="h-full bg-blue-400" style="width: ${progress}%"></div>
@@ -288,16 +363,120 @@ function renderWorkflows(workflows) {
     container.innerHTML = html;
 }
 
+async function deleteWorkflow(id, event) {
+    event.stopPropagation(); 
+    if(!confirm("Are you sure you want to delete this workflow? This will stop any running jobs.")) return;
+
+    const userId = document.getElementById('userIdInput').value;
+    try {
+        const res = await fetch(`${API_URL}/workflows/${id}`, {
+            method: "DELETE",
+            headers: { 'X-User-ID': userId }
+        });
+        if(res.ok) {
+            fetchStatus(); 
+        } else {
+            alert("Failed to delete workflow");
+        }
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+function openWorkflowDetails(wfId) {
+    const wf = currentWorkflowsCache.find(w => w.id === wfId);
+    if(!wf) return;
+
+    // --- FIX: Set current global ID ---
+    currentDetailWfId = wfId;
+
+    renderDetailsContent(wf);
+    document.getElementById('detailsModal').classList.remove('hidden');
+}
+
+function closeWorkflowDetails() {
+    currentDetailWfId = null;
+    document.getElementById('detailsModal').classList.add('hidden');
+}
+
+function renderDetailsContent(wf) {
+    document.getElementById('detailWfName').innerText = wf.name;
+    document.getElementById('detailWfId').innerText = "ID: " + wf.id;
+    
+    const container = document.getElementById('detailContent');
+    let contentHtml = `<div class="space-y-0 divide-y divide-slate-700">`;
+    
+    wf.branches.forEach(branch => {
+        contentHtml += `
+            <div class="p-4 bg-slate-800">
+                <div class="flex items-center gap-2 mb-3">
+                     <i class="fa-solid fa-code-branch text-slate-500 text-xs"></i>
+                     <span class="text-sm font-bold text-slate-300">${branch.name}</span>
+                </div>
+                <div class="space-y-2 pl-4 border-l border-slate-700">
+        `;
+        
+        branch.jobs.forEach(job => {
+            let icon = '<i class="fa-regular fa-circle text-slate-600"></i>';
+            let textColor = 'text-slate-400';
+            let progressText = '';
+            
+            if(job.status === 'RUNNING') {
+                icon = '<i class="fa-solid fa-circle-notch fa-spin text-blue-400"></i>';
+                textColor = 'text-blue-300';
+                // Show real-time percentage
+                progressText = `<span class="text-[10px] font-mono ml-2 bg-blue-900/50 text-blue-200 px-1 rounded">${job.progress || 0}%</span>`;
+            } else if(job.status === 'COMPLETED') {
+                icon = '<i class="fa-solid fa-circle-check text-emerald-400"></i>';
+                textColor = 'text-emerald-300';
+            } else if(job.status === 'FAILED') {
+                icon = '<i class="fa-solid fa-circle-xmark text-red-400"></i>';
+                textColor = 'text-red-300';
+            } else if(job.status === 'CANCELLED') {
+                icon = '<i class="fa-solid fa-ban text-slate-400"></i>';
+                textColor = 'text-slate-400';
+            }
+
+            contentHtml += `
+                <div class="flex justify-between items-center text-sm">
+                    <div class="flex items-center">
+                         <span class="${textColor}">${job.job_type}</span>
+                         ${progressText}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${icon}
+                        <span class="text-xs font-mono text-slate-500">${job.status}</span>
+                    </div>
+                </div>
+            `;
+            
+            if(job.error_msg) {
+                contentHtml += `<div class="text-[10px] text-red-400 mt-1 bg-red-900/20 p-1 rounded">${job.error_msg}</div>`;
+            }
+        });
+        
+        contentHtml += `</div></div>`;
+    });
+    
+    contentHtml += `</div>`;
+    container.innerHTML = contentHtml;
+}
+
 // --- 4. WORKFLOW BUILDER LOGIC ---
 
 function openBuilder() {
+    if (!currentSlideFilename) {
+        alert("Please select a slide from the left sidebar first.");
+        return;
+    }
+
     document.getElementById('builderModal').classList.remove('hidden');
     const container = document.getElementById('builderBranches');
-    container.innerHTML = ''; // Clear previous
-    addBuilderBranch(); // Start with one branch
+    container.innerHTML = ''; 
+    addBuilderBranch(); 
     
-    // Generate random default name
-    document.getElementById('buildWfName').value = "Job_" + Math.floor(Math.random() * 1000);
+    const cleanName = currentSlideFilename.split('.')[0];
+    document.getElementById('buildWfName').value = "Analysis_" + cleanName;
 }
 
 function closeBuilder() {
@@ -328,12 +507,10 @@ function addBuilderBranch() {
     `;
     
     container.appendChild(div);
-    // Add default job
     addBuilderJob(branchId);
 }
 
 function addBuilderJob(branchId) {
-    // Find the specific branch container by data-id
     const branchDiv = document.querySelector(`.builder-branch[data-id="${branchId}"] .jobs-container`);
     
     const div = document.createElement('div');
@@ -355,9 +532,13 @@ async function submitBuilder() {
     const userId = document.getElementById('userIdInput').value;
     const wfName = document.getElementById('buildWfName').value;
     
+    if (!currentSlideFilename) {
+        alert("Error: No slide selected.");
+        return;
+    }
+
     const branches = [];
     
-    // Traverse DOM to build payload
     document.querySelectorAll('.builder-branch').forEach(bDiv => {
         const branchName = bDiv.querySelector('.branch-name-input').value;
         const jobs = [];
@@ -385,6 +566,7 @@ async function submitBuilder() {
 
     const payload = {
         workflow_name: wfName,
+        slide_name: currentSlideFilename,
         branches: branches
     };
 
@@ -394,6 +576,12 @@ async function submitBuilder() {
             headers: { "Content-Type": "application/json", "X-User-ID": userId },
             body: JSON.stringify(payload)
         });
+        
+        if (!res.ok) {
+            const err = await res.json();
+            alert("Error: " + (err.detail || "Unknown error"));
+            return;
+        }
         
         if (res.status === 403 || res.status === 429) {
             alert("Queue Full! You are now waiting for a slot.");
