@@ -1,6 +1,6 @@
 # TissueLab Workflow Scheduler
 
-#### Hongyu Tu, Nov 20-21, 2025
+#### Hongyu Tu, Nov 21, 2025
 
 
 ## Key Features & Design Decisions
